@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+<title>My Budget Planner</title>
+<link rel="manifest" href="manifest.json" />
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600;700&family=Lato:wght@300;400;700&display=swap" rel="stylesheet" />
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html { -webkit-tap-highlight-color: transparent; }
+  body { background: #F9F3EE; overscroll-behavior: none; }
+  input[type=number]::-webkit-inner-spin-button,
+  input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; }
+  input[type=number] { -moz-appearance: textfield; }
+  ::-webkit-scrollbar { width: 0; }
+  .fade-in { animation: fadeIn 0.4s ease forwards; }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+  .pulse { animation: pulse 1.5s ease-in-out infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useRef, useMemo, useCallback } = React;
+
+const SUPABASE_URL = "https://irmtvjxlntozigbqxhvm.supabase.co";
+const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlybXR2anhsbnRvemlnYnF4aHZtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY4NTkzMTQsImV4cCI6MjA5MjQzNTMxNH0.nyIZx7Z0GnHEIlZpBlN6TzHHsf7tGuhdvWECdpcQ-a0";
+const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+const CATEGORIES = [
+  { id: "housing",       label: "Housing & Rent",       icon: "🏠", color: "#C9A99A" },
+  { id: "food",          label: "Groceries & Dining",   icon: "🛒", color: "#D4B8A5" },
+  { id: "transport",     label: "Transport",             icon: "🚗", color: "#B5C4B1" },
+  { id: "selfcare",      label: "Self-Care & Beauty",   icon: "✨", color: "#E8C5C0" },
+  { id: "health",        label: "Health & Wellness",    icon: "💊", color: "#A8BDB8" },
+  { id: "entertainment", label: "Entertainment",         icon: "🎬", color: "#CFC4DC" },
+  { id: "clothing",      label: "Clothing & Shopping",  icon: "👗", color: "#DEBCB5" },
+  { id: "savings",       label: "Savings & Goals",      icon: "💰", color: "#B5C9B8" },
+  { id: "subscriptions", label: "Subscriptions",         icon: "📱", color: "#C4C4D4" },
+  { id: "other",         label: "Other",                 icon: "📦", color: "#D4CABC" },
+];
+
+const MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+
+function fmt(v) {
+  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(v || 0);
+}
+
+function rowId(month, year) { return `budget-${year}-${month}`; }
+
+/* ── Donut chart ─────────────────────────────────────── */
+function DonutChart({ data, total }) {
+  const size = 150, r = 56, cx = 75, cy = 75;
+  const circ = 2 * Math.PI * r;
+  let offset = 0;
+  const slices = data.filter(d => d.value > 0).map(d => {
+    const dash = (d.value / total) * circ;
+    const s = { ...d, dash, gap: circ - dash, offset };
+    offset += dash;
+    return s;
+  });
+  if (!total) return (
+    <svg width={size} height={size} viewBox="0 0 150 150">
+      <circle cx={cx} cy={cy} r={r} fill="none" stroke="#EDE8E3" strokeWidth="20"/>
+      <text x={cx} y={cy+5} textAnchor="middle" style={{fontFamily:"'Cormorant Garamond',serif",fontSize:12,fill:"#B0A090"}}>No data yet</text>
+    </svg>
+  );
+  return (
+    <svg width={size} height={size} viewBox="0 0 150 150" style={{transform:"rotate(-90deg)"}}>
+      {slices.map((s,i) => (
+        <circle key={i} cx={cx} cy={cy} r={r} fill="none"
+          stroke={s.color} strokeWidth="20"
+          strokeDasharray={`${s.dash} ${s.gap}`}
+          strokeDashoffset={-s.offset} strokeLinecap="butt"/>
+      ))}
+    </svg>
+  );
+}
+
+/* ── Main App ─────────────────────────────────────────── */
+function App() {
+  const now = new Date();
+  const [month, setMonth]   = useState(now.getMonth());
+  const [year,  setYear]    = useState(now.getFullYear());
+  const [income,   setIncome]  = useState("");
+  const [budgets,  setBudgets] = useState({});
+  const [actuals,  setActuals] = useState({});
+  const [tab, setTab]          = useState("plan");
+  const [syncState, setSyncState] = useState("idle"); // idle | saving | saved | error
+  const saveTimer = useRef(null);
+
+  /* Load data when month/year changes */
+  useEffect(() => {
+    let cancelled = false;
+    setSyncState("idle");
+    async function load() {
+      const { data, error } = await supabase
+        .from("budget_data")
+        .select("*")
+        .eq("id", rowId(month, year))
+        .single();
+      if (cancelled) return;
+      if (data && !error) {
+        setIncome(data.income?.toString() || "");
+        setBudgets(data.budgets || {});
+        setActuals(data.actuals || {});
+      } else {
+        setIncome(""); setBudgets({}); setActuals({});
+      }
+    }
+    load();
+    return () => { cancelled = true; };
+  }, [month, year]);
+
+  /* Auto-save with debounce */
+  const save = useCallback(async (inc, bud, act) => {
+    setSyncState("saving");
+    const { error } = await supabase.from("budget_data").upsert({
+      id: rowId(month, year),
+      month, year,
+      income: parseFloat(inc) || 0,
+      budgets: bud,
+      actuals: act,
+      updated_at: new Date().toISOString(),
+    });
+    setSyncState(error ? "error" : "saved");
+    if (!error) setTimeout(() => setSyncState("idle"), 2000);
+  }, [month, year]);
+
+  function triggerSave(inc, bud, act) {
+    clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => save(inc, bud, act), 800);
+  }
+
+  function handleIncome(v)      { setIncome(v);                      triggerSave(v,       budgets, actuals); }
+  function handleBudget(id, v)  { const b = {...budgets,[id]:v};     setBudgets(b);        triggerSave(income, b, actuals); }
+  function handleActual(id, v)  { const a = {...actuals,[id]:v};     setActuals(a);        triggerSave(income, budgets, a); }
+
+  function prevMonth() { if (month===0){setMonth(11);setYear(y=>y-1);}else setMonth(m=>m-1); }
+  function nextMonth() { if (month===11){setMonth(0);setYear(y=>y+1);}else setMonth(m=>m+1); }
+
+  const totalBudgeted = useMemo(() => CATEGORIES.reduce((s,c)=>s+(parseFloat(budgets[c.id])||0),0),[budgets]);
+  const totalSpent    = useMemo(() => CATEGORIES.reduce((s,c)=>s+(parseFloat(actuals[c.id])||0),0),[actuals]);
+  const inc = parseFloat(income)||0;
+  const chartTotal = tab==="plan" ? totalBudgeted : totalSpent;
+  const remaining  = inc - (tab==="plan" ? totalBudgeted : totalSpent);
+  const over = remaining < 0;
+
+  const donutData = CATEGORIES.map(c=>({ color:c.color, value:parseFloat(tab==="plan"?budgets[c.id]:actuals[c.id])||0 }));
+  const topCats   = CATEGORIES.map(c=>({...c,value:parseFloat(tab==="plan"?budgets[c.id]:actuals[c.id])||0}))
+    .filter(c=>c.value>0).sort((a,b)=>b.value-a.value).slice(0,5);
+
+  const syncLabel = { idle:"", saving:"Saving…", saved:"✓ Synced", error:"⚠ Sync error" }[syncState];
+  const syncColor = { idle:"transparent", saving:"#C9907A", saved:"#7A9A80", error:"#C05040" }[syncState];
+
+  return (
+    <div style={{minHeight:"100vh",background:"linear-gradient(145deg,#F9F3EE 0%,#F2EAE1 40%,#EDE3DA 100%)",fontFamily:"'Lato',sans-serif",color:"#3D2E26",overflowX:"hidden"}}>
+
+      {/* Decorative blobs */}
+      <div style={{position:"fixed",top:-80,right:-80,width:300,height:300,borderRadius:"60% 40% 70% 30%/50% 60% 40% 50%",background:"radial-gradient(circle,rgba(222,188,181,0.35) 0%,transparent 70%)",pointerEvents:"none",zIndex:0}}/>
+      <div style={{position:"fixed",bottom:-60,left:-60,width:260,height:260,borderRadius:"40% 60% 30% 70%/60% 40% 50% 50%",background:"radial-gradient(circle,rgba(181,196,177,0.3) 0%,transparent 70%)",pointerEvents:"none",zIndex:0}}/>
+
+      <div style={{maxWidth:480,margin:"0 auto",padding:"0 0 80px",position:"relative",zIndex:1}}>
+
+        {/* ── Header ── */}
+        <div style={{padding:"36px 24px 16px",textAlign:"center"}}>
+          <div style={{fontSize:10,letterSpacing:"0.2em",textTransform:"uppercase",color:"#C9907A",fontWeight:700,marginBottom:6}}>Monthly Budget Planner</div>
+          <h1 style={{fontFamily:"'Cormorant Garamond',serif",fontSize:36,fontWeight:600,color:"#2E1F18",lineHeight:1.1}}>My Budget</h1>
+          <p style={{fontSize:12,color:"#967060",marginTop:4}}>Plan beautifully. Spend intentionally.</p>
+
+          {/* Month picker */}
+          <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:12,marginTop:18}}>
+            <button onClick={prevMonth} style={{background:"rgba(255,255,255,0.7)",border:"1px solid #D9C8BC",borderRadius:20,padding:"6px 16px",fontSize:16,color:"#7A5C50",cursor:"pointer"}}>‹</button>
+            <div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:20,fontWeight:600,color:"#3D2E26",minWidth:150,textAlign:"center"}}>{MONTHS[month]} {year}</div>
+            <button onClick={nextMonth} style={{background:"rgba(255,255,255,0.7)",border:"1px solid #D9C8BC",borderRadius:20,padding:"6px 16px",fontSize:16,color:"#7A5C50",cursor:"pointer"}}>›</button>
+          </div>
+
+          {/* Sync badge */}
+          <div style={{height:18,marginTop:8,fontSize:11,color:syncColor,letterSpacing:"0.06em",transition:"color 0.3s"}}>{syncLabel}</div>
+        </div>
+
+        {/* ── Income ── */}
+        <div style={{margin:"0 16px",background:"rgba(255,255,255,0.75)",backdropFilter:"blur(12px)",borderRadius:20,padding:"18px 22px",boxShadow:"0 2px 20px rgba(140,100,80,0.08)",border:"1px solid rgba(255,255,255,0.9)"}}>
+          <div style={{fontSize:10,letterSpacing:"0.16em",textTransform:"uppercase",color:"#B09080",marginBottom:8}}>Monthly Income</div>
+          <div style={{display:"flex",alignItems:"center",gap:6}}>
+            <span style={{fontSize:22,fontFamily:"'Cormorant Garamond',serif",color:"#C9907A",fontWeight:600}}>$</span>
+            <input type="number" placeholder="0" value={income} onChange={e=>handleIncome(e.target.value)}
+              style={{flex:1,fontSize:28,fontFamily:"'Cormorant Garamond',serif",fontWeight:600,color:"#2E1F18",border:"none",background:"none",outline:"none"}}/>
+          </div>
+          <div style={{fontSize:11,color:"#C0A898",marginTop:4}}>Your total take-home pay this month</div>
+        </div>
+
+        {/* ── Summary ── */}
+        <div style={{display:"flex",gap:10,margin:"12px 16px 0"}}>
+          {[
+            {label:"Budgeted", val:totalBudgeted, accent:"#C9907A"},
+            {label:"Spent",    val:totalSpent,    accent:"#7A9A80"},
+            {label:"Income",   val:inc,           accent:"#9A7890"},
+          ].map(s=>(
+            <div key={s.label} style={{flex:1,background:"rgba(255,255,255,0.72)",backdropFilter:"blur(12px)",borderRadius:16,padding:"14px 12px",border:`1.5px solid ${s.accent}25`,boxShadow:"0 2px 12px rgba(140,100,80,0.06)"}}>
+              <div style={{fontSize:9,letterSpacing:"0.14em",textTransform:"uppercase",color:"#B09080",marginBottom:4}}>{s.label}</div>
+              <div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:20,fontWeight:700,color:s.accent}}>{fmt(s.val)}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* ── Donut chart ── */}
+        {chartTotal > 0 && (
+          <div className="fade-in" style={{margin:"12px 16px 0",background:"rgba(255,255,255,0.72)",backdropFilter:"blur(12px)",borderRadius:20,padding:"20px",border:"1px solid rgba(255,255,255,0.9)",boxShadow:"0 2px 20px rgba(140,100,80,0.08)"}}>
+            <div style={{fontSize:10,letterSpacing:"0.14em",textTransform:"uppercase",color:"#B09080",marginBottom:14}}>Spending Breakdown</div>
+            <div style={{display:"flex",alignItems:"center",gap:16}}>
+              <div style={{position:"relative",flexShrink:0,width:150,height:150}}>
+                <DonutChart data={donutData} total={chartTotal}/>
+                <div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",pointerEvents:"none"}}>
+                  <div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:20,fontWeight:700,color:"#3D2E26"}}>{fmt(chartTotal)}</div>
+                  <div style={{fontSize:9,letterSpacing:"0.1em",textTransform:"uppercase",color:"#B09080"}}>total</div>
+                </div>
+              </div>
+              <div style={{flex:1,display:"flex",flexDirection:"column",gap:7}}>
+                {topCats.map(c=>(
+                  <div key={c.id} style={{display:"flex",alignItems:"center",gap:8}}>
+                    <div style={{width:9,height:9,borderRadius:"50%",background:c.color,flexShrink:0}}/>
+                    <span style={{fontSize:12,color:"#7A5C50",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.label}</span>
+                    <span style={{fontSize:12,fontWeight:700,color:"#4A3028"}}>{fmt(c.value)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── Remaining banner ── */}
+        {inc > 0 && (
+          <div style={{margin:"12px 16px 0",padding:"16px 22px",borderRadius:20,background:over?"linear-gradient(135deg,rgba(200,100,80,0.1),rgba(200,100,80,0.05))":"linear-gradient(135deg,rgba(181,201,184,0.25),rgba(181,201,184,0.1))",border:`1.5px solid ${over?"rgba(200,100,80,0.2)":"rgba(181,201,184,0.4)"}`,textAlign:"center"}}>
+            <div style={{fontSize:10,letterSpacing:"0.14em",textTransform:"uppercase",color:"#B09080",marginBottom:4}}>
+              {tab==="plan" ? "Unallocated" : "Remaining"}
+            </div>
+            <div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:32,fontWeight:700,color:over?"#C05040":"#5A8060"}}>{fmt(Math.abs(remaining))}</div>
+            <div style={{fontSize:12,color:over?"#C05040":"#7A9A80",marginTop:2}}>
+              {over ? `⚠️ ${fmt(Math.abs(remaining))} over your income` : `✓ ${tab==="plan"?"Still to allocate":"Left to spend"}`}
+            </div>
+          </div>
+        )}
+
+        {/* ── Tabs ── */}
+        <div style={{display:"flex",margin:"16px 16px 0",background:"rgba(255,255,255,0.55)",borderRadius:14,padding:4,border:"1px solid rgba(255,255,255,0.9)"}}>
+          {[{id:"plan",label:"📋 Budget Plan"},{id:"actual",label:"💳 Actual Spending"}].map(t=>(
+            <button key={t.id} onClick={()=>setTab(t.id)} style={{flex:1,padding:"10px 0",textAlign:"center",fontSize:13,fontWeight:tab===t.id?700:500,borderRadius:10,cursor:"pointer",border:"none",background:tab===t.id?"rgba(201,144,122,0.15)":"transparent",color:tab===t.id?"#C9907A":"#9A7A6A",letterSpacing:"0.04em",transition:"all 0.2s"}}>
+              {t.label}
+            </button>
+          ))}
+        </div>
+
+        {/* ── Category list ── */}
+        <div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:18,fontWeight:600,color:"#3D2E26",margin:"18px 16px 10px"}}>
+          {tab==="plan" ? "Allocate Your Budget" : "Track Your Spending"}
+        </div>
+
+        {CATEGORIES.map(cat => {
+          const bv = parseFloat(budgets[cat.id])||0;
+          const av = parseFloat(actuals[cat.id])||0;
+          const pct = bv>0 ? Math.min((av/bv)*100,100) : 0;
+          const isOver = av>bv && bv>0;
+          return (
+            <div key={cat.id} className="fade-in" style={{margin:"0 16px 10px",background:"rgba(255,255,255,0.68)",backdropFilter:"blur(8px)",borderRadius:16,padding:"14px 16px",border:"1px solid rgba(255,255,255,0.85)",boxShadow:"0 1px 8px rgba(140,100,80,0.05)"}}>
+              <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
+                <span style={{fontSize:20}}>{cat.icon}</span>
+                <span style={{flex:1,fontSize:14,fontWeight:600,color:"#3D2E26"}}>{cat.label}</span>
+                {tab==="actual" && bv>0 && (
+                  <span style={{fontSize:11,fontWeight:700,color:isOver?"#C05040":"#7A9A80"}}>{Math.round((av/bv)*100)}%</span>
+                )}
+              </div>
+
+              {tab==="plan" ? (
+                <div style={{position:"relative"}}>
+                  <span style={{position:"absolute",left:12,top:"50%",transform:"translateY(-50%)",fontSize:15,color:cat.color,fontWeight:700}}>$</span>
+                  <input type="number" placeholder="0" value={budgets[cat.id]||""} onChange={e=>handleBudget(cat.id,e.target.value)}
+                    style={{width:"100%",padding:"8px 12px 8px 26px",fontSize:16,fontFamily:"'Cormorant Garamond',serif",fontWeight:600,border:`1.5px solid ${cat.color}50`,borderRadius:10,background:`${cat.color}12`,color:"#3D2E26",outline:"none"}}/>
+                </div>
+              ) : (
+                <>
+                  <div style={{position:"relative"}}>
+                    <span style={{position:"absolute",left:12,top:"50%",transform:"translateY(-50%)",fontSize:15,color:cat.color,fontWeight:700}}>$</span>
+                    <input type="number" placeholder="0" value={actuals[cat.id]||""} onChange={e=>handleActual(cat.id,e.target.value)}
+                      style={{width:"100%",padding:"8px 12px 8px 26px",fontSize:16,fontFamily:"'Cormorant Garamond',serif",fontWeight:600,border:`1.5px solid ${cat.color}50`,borderRadius:10,background:`${cat.color}12`,color:"#3D2E26",outline:"none"}}/>
+                  </div>
+                  {bv>0 ? (
+                    <div style={{marginTop:8}}>
+                      <div style={{height:5,background:"#EDE8E3",borderRadius:99,overflow:"hidden"}}>
+                        <div style={{height:"100%",width:`${pct}%`,background:isOver?"#C05040":cat.color,borderRadius:99,transition:"width 0.4s ease"}}/>
+                      </div>
+                      <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:"#B09080",marginTop:4}}>
+                        <span>Spent {fmt(av)}</span>
+                        <span style={{color:isOver?"#C05040":"#B09080"}}>Budget {fmt(bv)}</span>
+                      </div>
+                    </div>
+                  ) : (
+                    <div style={{fontSize:11,color:"#C0A898",marginTop:6}}>Set a budget in Budget Plan to track progress</div>
+                  )}
+                </>
+              )}
+            </div>
+          );
+        })}
+
+        {/* Footer */}
+        <div style={{textAlign:"center",fontSize:11,color:"#C0A898",margin:"20px 16px 0",lineHeight:1.8}}>
+          💗 Your data syncs automatically across all your devices.<br/>
+          Switch months anytime — everything is saved.
+        </div>
+
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>

@@ -1,0 +1,16 @@
+{
+  "name": "My Budget Planner",
+  "short_name": "Budget",
+  "description": "Personal monthly budget planner",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#F9F3EE",
+  "theme_color": "#C9907A",
+  "icons": [
+    {
+      "src": "https://fav.farm/💰",
+      "sizes": "192x192",
+      "type": "image/png"
+    }
+  ]
+}
