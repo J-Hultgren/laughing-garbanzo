@@ -19,7 +19,9 @@ input[type=number]{-moz-appearance:textfield}
 ::-webkit-scrollbar{width:0}
 select{-webkit-appearance:none}
 .fade{animation:fu 0.3s ease forwards}
-@keyframes fu{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+@keyframes fu{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:none}}
+.shake{animation:sk 0.25s ease}
+@keyframes sk{0%,100%{transform:none}25%{transform:translateX(-3px)}75%{transform:translateX(3px)}}
 </style>
 </head>
 <body>
@@ -34,72 +36,88 @@ const SB = window.supabase.createClient(
 const fmt  = v => new Intl.NumberFormat("en-US",{style:"currency",currency:"USD",maximumFractionDigits:0}).format(v||0);
 const fmtD = v => new Intl.NumberFormat("en-US",{style:"currency",currency:"USD",minimumFractionDigits:2}).format(v||0);
 const MO = ["January","February","March","April","May","June","July","August","September","October","November","December"];
-const C = {blush:"#C9907A",sage:"#7A9A80",mist:"#9A7890",text:"#3D2E26",sub:"#967060",light:"#B09080",card:"rgba(255,255,255,0.78)",border:"rgba(255,255,255,0.92)"};
+const C = {
+  blush:"#C9907A", sage:"#7A9A80", mist:"#9A7890",
+  text:"#3D2E26", sub:"#967060", light:"#B09080",
+  card:"rgba(255,255,255,0.78)", border:"rgba(255,255,255,0.92)"
+};
 
+// ── Default categories (dynamic — user can edit/add/delete) ──────
+const CATS_DEFAULT = [
+  // INCOME — TP is weekly: $2,080/wk LC + $425/wk SCU
+  {id:"xe",    lbl:"X-Energy (biweekly $4,440)",        ico:"💼", g:"income",  def:8880, inc:true},
+  {id:"tp_lc", lbl:"TerraPower – LC (weekly $2,080)",   ico:"💼", g:"income",  def:8320, inc:true},
+  {id:"tp_sc", lbl:"TerraPower – SCU (weekly $425)",    ico:"💼", g:"income",  def:1700, inc:true},
+  // HOUSING
+  {id:"mort",  lbl:"Mortgage",                          ico:"🏠", g:"housing", def:2500},
+  {id:"eq",    lbl:"SCU Home Equity",                   ico:"🏠", g:"housing", def:850},
+  {id:"ins",   lbl:"Insurance (Auto/Home/Life)",         ico:"🛡️",g:"housing", def:500},
+  {id:"utl",   lbl:"Electric / Water / Trash",          ico:"💡", g:"housing", def:200},
+  {id:"hrep",  lbl:"House Repair Fund",                 ico:"🔧", g:"housing", def:750},
+  // FAMILY
+  {id:"groc",  lbl:"Groceries & Household",             ico:"🛒", g:"family",  def:2500},
+  {id:"dine",  lbl:"Family Dining & Outings",           ico:"🍽️",g:"family",  def:1200},
+  {id:"dance", lbl:"Dance & Competition Fees",          ico:"💃", g:"family",  def:1020},
+  {id:"med",   lbl:"Medical / Dental / Rx",             ico:"💊", g:"family",  def:500},
+  // BILLS
+  {id:"ez",    lbl:"EZ Pass / Tolls",                   ico:"🚗", g:"bills",   def:30},
+  {id:"fid",   lbl:"Fidium Internet",                   ico:"📶", g:"bills",   def:50},
+  {id:"gfi",   lbl:"Google Fi (Phones)",                ico:"📱", g:"bills",   def:150},
+  {id:"arlo",  lbl:"Arlo Security",                     ico:"📷", g:"bills",   def:20},
+  {id:"hulu",  lbl:"Hulu",                              ico:"📺", g:"bills",   def:19},
+  {id:"net",   lbl:"Netflix",                           ico:"📺", g:"bills",   def:23},
+  {id:"yt",    lbl:"YouTube Premium",                   ico:"📺", g:"bills",   def:23},
+  // HEALTH
+  {id:"gym",   lbl:"LFOD Gym",                          ico:"💪", g:"health",  def:60},
+  // SAVINGS
+  {id:"acorn", lbl:"Acorn Investing",                   ico:"🌱", g:"savings", def:500},
+  {id:"germ",  lbl:"Germany Trip Fund",                 ico:"✈️", g:"savings", def:1250},
+  {id:"ri",    lbl:"Rhode Island Trips Fund",           ico:"🏖️",g:"savings", def:667},
+  {id:"trv",   lbl:"Misc Travel Fund",                  ico:"🧳", g:"savings", def:84},
+  // DEBT MINIMUMS
+  {id:"p_av",  lbl:"Avant",                             ico:"💳", g:"debt",    def:1392},
+  {id:"p_sf",  lbl:"SoFi",                              ico:"💳", g:"debt",    def:1699},
+  {id:"p_up",  lbl:"Upstart",                           ico:"💳", g:"debt",    def:1301},
+  {id:"p_ug",  lbl:"Upgrade",                           ico:"💳", g:"debt",    def:525},
+  {id:"p_be",  lbl:"Best Egg",                          ico:"💳", g:"debt",    def:915},
+  {id:"p_af",  lbl:"Affirm",                            ico:"💳", g:"debt",    def:478},
+  {id:"p_ba",  lbl:"Barclay",                           ico:"💳", g:"debt",    def:671},
+  {id:"p_ax",  lbl:"Amex",                              ico:"💳", g:"debt",    def:393},
+  {id:"p_ca",  lbl:"Citi AA",                           ico:"💳", g:"debt",    def:325},
+  {id:"p_ci",  lbl:"Citi",                              ico:"💳", g:"debt",    def:233},
+];
+
+const GRP = {
+  income: {lbl:"Income",               col:C.sage,   ico:"💰"},
+  housing:{lbl:"Housing",              col:C.blush,  ico:"🏠"},
+  family: {lbl:"Family",               col:"#E8C5C0",ico:"👨‍👩‍👧‍👦"},
+  bills:  {lbl:"Bills & Subscriptions",col:"#C4C4D4",ico:"📄"},
+  health: {lbl:"Health & Fitness",     col:"#A8BDB8",ico:"💊"},
+  savings:{lbl:"Savings & Investing",  col:"#B5C9B8",ico:"🌱"},
+  debt:   {lbl:"Debt Payments",        col:"#D4CABC",ico:"💳"},
+};
+
+// ── Default debts ────────────────────────────────────────────────
 const DEBTS0 = [
-  {id:"d1", name:"Avant",           bal:28074,  apr:33.1, min:1392, col:"#DEBCB5", ord:1},
-  {id:"d2", name:"Barclay",         bal:16000,  apr:29,   min:671,  col:"#C9A99A", ord:2},
-  {id:"d3", name:"American Express",bal:14784,  apr:29,   min:393,  col:"#D4B8A5", ord:3},
-  {id:"d4", name:"SoFi",            bal:59484,  apr:26,   min:1699, col:"#E8C5C0", ord:4},
-  {id:"d5", name:"Upstart",         bal:39785,  apr:17,   min:1301, col:"#CFC4DC", ord:5},
-  {id:"d6", name:"Upgrade",         bal:20381,  apr:17,   min:525,  col:"#C4C4D4", ord:6},
-  {id:"d7", name:"Best Egg",        bal:26596,  apr:15,   min:915,  col:"#B5C9B8", ord:7},
-  {id:"d8", name:"Affirm",          bal:6525,   apr:0,    min:450,  col:"#A8BDB8", ord:8},
-  {id:"d9", name:"Citi",            bal:8165,   apr:0,    min:233,  col:"#B5C4B1", ord:9},
-  {id:"d10",name:"Citi AA",         bal:11365,  apr:0,    min:325,  col:"#D4CABC", ord:10},
-  {id:"d11",name:"SCU Equity Loan", bal:149589, apr:10,   min:850,  col:"#C9907A", ord:11},
-  {id:"d12",name:"Mortgage",        bal:220149, apr:2.8,  min:2500, col:"#7A9A80", ord:12},
+  {id:"d1", name:"Avant",            bal:28074,  apr:33.1,min:1392,col:"#DEBCB5",ord:1},
+  {id:"d2", name:"Barclay",          bal:16000,  apr:29,  min:671, col:"#C9A99A",ord:2},
+  {id:"d3", name:"American Express", bal:14784,  apr:29,  min:393, col:"#D4B8A5",ord:3},
+  {id:"d4", name:"SoFi",             bal:59484,  apr:26,  min:1699,col:"#E8C5C0",ord:4},
+  {id:"d5", name:"Upstart",          bal:39785,  apr:17,  min:1301,col:"#CFC4DC",ord:5},
+  {id:"d6", name:"Upgrade",          bal:20381,  apr:17,  min:525, col:"#C4C4D4",ord:6},
+  {id:"d7", name:"Best Egg",         bal:26596,  apr:15,  min:915, col:"#B5C9B8",ord:7},
+  {id:"d8", name:"Affirm",           bal:6525,   apr:0,   min:450, col:"#A8BDB8",ord:8},
+  {id:"d9", name:"Citi",             bal:8165,   apr:0,   min:233, col:"#B5C4B1",ord:9},
+  {id:"d10",name:"Citi AA",          bal:11365,  apr:0,   min:325, col:"#D4CABC",ord:10},
+  {id:"d11",name:"SCU Equity Loan",  bal:149589, apr:10,  min:850, col:"#C9907A",ord:11},
+  {id:"d12",name:"Mortgage",         bal:220149, apr:2.8, min:2500,col:"#7A9A80",ord:12},
 ];
 const ACCS0 = {
-  lc: {name:"Main Checking (LC/XE)",bal:3385,   col:C.blush},
-  sc: {name:"SCU Checking (TP)",    bal:1522.99, col:C.sage},
-};
-const CATS = [
-  {id:"xe",    lbl:"X-Energy (biweekly)",        ico:"💼",g:"income", def:8880, inc:true},
-  {id:"tp_lc", lbl:"TerraPower – LC (biweekly)", ico:"💼",g:"income", def:4278, inc:true},
-  {id:"tp_sc", lbl:"TerraPower – SCU (weekly)",  ico:"💼",g:"income", def:1700, inc:true},
-  {id:"mort",  lbl:"Mortgage",                   ico:"🏠",g:"housing",def:2500},
-  {id:"eq",    lbl:"SCU Home Equity",            ico:"🏠",g:"housing",def:850},
-  {id:"ins",   lbl:"Insurance",                  ico:"🛡️",g:"housing",def:500},
-  {id:"utl",   lbl:"Electric/Water/Trash",       ico:"💡",g:"housing",def:200},
-  {id:"hrep",  lbl:"House Repair Fund",          ico:"🔧",g:"housing",def:750},
-  {id:"groc",  lbl:"Groceries & Household",      ico:"🛒",g:"family", def:2500},
-  {id:"dine",  lbl:"Family Dining & Outings",    ico:"🍽️",g:"family", def:1200},
-  {id:"dance", lbl:"Dance & Competition",        ico:"💃",g:"family", def:1020},
-  {id:"med",   lbl:"Medical/Dental/Rx",          ico:"💊",g:"family", def:500},
-  {id:"ez",    lbl:"EZ Pass / Tolls",            ico:"🚗",g:"bills",  def:30},
-  {id:"fid",   lbl:"Fidium Internet",            ico:"📶",g:"bills",  def:50},
-  {id:"gfi",   lbl:"Google Fi (Phones)",         ico:"📱",g:"bills",  def:150},
-  {id:"arlo",  lbl:"Arlo Security",              ico:"📷",g:"bills",  def:20},
-  {id:"hulu",  lbl:"Hulu",                       ico:"📺",g:"bills",  def:19},
-  {id:"net",   lbl:"Netflix",                    ico:"📺",g:"bills",  def:23},
-  {id:"yt",    lbl:"YouTube Premium",            ico:"📺",g:"bills",  def:23},
-  {id:"gym",   lbl:"LFOD Gym",                   ico:"💪",g:"health", def:60},
-  {id:"acorn", lbl:"Acorn Investing",            ico:"🌱",g:"savings",def:500},
-  {id:"germ",  lbl:"Germany Trip Fund",          ico:"✈️",g:"savings",def:1250},
-  {id:"ri",    lbl:"Rhode Island Trips Fund",    ico:"🏖️",g:"savings",def:667},
-  {id:"trv",   lbl:"Misc Travel Fund",           ico:"🧳",g:"savings",def:84},
-  {id:"p_av",  lbl:"Avant (payment)",            ico:"💳",g:"debt",   def:1392},
-  {id:"p_sf",  lbl:"SoFi (payment)",             ico:"💳",g:"debt",   def:1699},
-  {id:"p_up",  lbl:"Upstart (payment)",          ico:"💳",g:"debt",   def:1301},
-  {id:"p_ug",  lbl:"Upgrade (payment)",          ico:"💳",g:"debt",   def:525},
-  {id:"p_be",  lbl:"Best Egg (payment)",         ico:"💳",g:"debt",   def:915},
-  {id:"p_af",  lbl:"Affirm (payment)",           ico:"💳",g:"debt",   def:478},
-  {id:"p_ba",  lbl:"Barclay (payment)",          ico:"💳",g:"debt",   def:671},
-  {id:"p_ax",  lbl:"Amex (payment)",             ico:"💳",g:"debt",   def:393},
-  {id:"p_ca",  lbl:"Citi AA (payment)",          ico:"💳",g:"debt",   def:325},
-  {id:"p_ci",  lbl:"Citi (payment)",             ico:"💳",g:"debt",   def:233},
-];
-const GRP = {
-  income: {lbl:"Income",              col:C.sage,  ico:"💰"},
-  housing:{lbl:"Housing",             col:C.blush, ico:"🏠"},
-  family: {lbl:"Family",             col:"#E8C5C0",ico:"👨‍👩‍👧‍👦"},
-  bills:  {lbl:"Bills & Subs",       col:"#C4C4D4",ico:"📄"},
-  health: {lbl:"Health & Fitness",   col:"#A8BDB8",ico:"💊"},
-  savings:{lbl:"Savings & Investing",col:"#B5C9B8",ico:"🌱"},
-  debt:   {lbl:"Debt Payments",      col:"#D4CABC",ico:"💳"},
+  lc:{name:"Main Checking (LC / X-Energy)", bal:3385,    col:C.blush},
+  sc:{name:"SCU Checking (TerraPower)",     bal:1522.99, col:C.sage},
 };
 
+// ── Debt math ────────────────────────────────────────────────────
 function payoffMonths(bal,apr,pay){
   if(bal<=0)return 0; if(pay<=0)return Infinity;
   if(apr===0)return Math.ceil(bal/pay);
@@ -112,10 +130,14 @@ function payoffLbl(m){
   const d=new Date(); d.setMonth(d.getMonth()+m);
   return d.toLocaleDateString("en-US",{month:"short",year:"numeric"});
 }
+
+// ── Supabase helpers ─────────────────────────────────────────────
 async function dbGet(k){const{data,error}=await SB.from("budget_data").select("*").eq("id",k).single();return(error||!data)?null:data;}
 async function dbSet(k,pay){await SB.from("budget_data").upsert({id:k,month:pay.month||0,year:pay.year||0,income:0,budgets:pay.budgets||{},actuals:pay.actuals||{},updated_at:new Date().toISOString()});}
 
-// ── APP ────────────────────────────────────────────────────────────
+// ════════════════════════════════════════════════════════════════
+//  ROOT APP
+// ════════════════════════════════════════════════════════════════
 function App(){
   const now=new Date();
   const [page,setPage]=useState("dash");
@@ -124,25 +146,36 @@ function App(){
   const [sync,setSync]=useState("idle");
   const [loading,setLoad]=useState(true);
   const T=useRef({});
-  const initB=()=>Object.fromEntries(CATS.map(c=>[c.id,c.def]));
-  const [budgets,setBudgets]=useState(initB);
+
+  // Dynamic categories
+  const [cats,setCats]=useState(()=>CATS_DEFAULT.map(c=>({...c})));
+  // Budget values
+  const initB=useCallback((catList)=>Object.fromEntries(catList.map(c=>[c.id,c.def])),[]);
+  const [budgets,setBudgets]=useState(()=>initB(CATS_DEFAULT));
   const [actuals,setActuals]=useState({});
+  // Debts
   const [debts,setDebts]=useState(DEBTS0);
   const [dpays,setDpays]=useState({});
   const [editD,setEditD]=useState(null);
   const [newPay,setNewPay]=useState({did:"",amt:"",note:"",date:""});
   const [showAdd,setShowAdd]=useState(false);
   const [ndf,setNdf]=useState({name:"",bal:"",apr:"",min:""});
+  // Accounts
   const [accs,setAccs]=useState(ACCS0);
 
+  // Load from Supabase
   useEffect(()=>{load();},[mo,yr]);
   async function load(){
     setLoad(true);
     try{
-      const [bR,dR,pR,aR]=await Promise.all([
-        dbGet(`bud-${yr}-${mo}`),dbGet("debts-v1"),dbGet(`dpay-${yr}-${mo}`),dbGet("accs-v1")
+      const [bR,dR,pR,aR,cR]=await Promise.all([
+        dbGet(`bud-${yr}-${mo}`),dbGet("debts-v1"),dbGet(`dpay-${yr}-${mo}`),
+        dbGet("accs-v1"),dbGet("cats-v1"),
       ]);
-      setBudgets(bR?.budgets?{...initB(),...bR.budgets}:initB());
+      // Load cats first so budgets can use saved defaults
+      const loadedCats = cR?.budgets?.cats || CATS_DEFAULT.map(c=>({...c}));
+      setCats(loadedCats);
+      setBudgets(bR?.budgets ? {...initB(loadedCats),...bR.budgets} : initB(loadedCats));
       setActuals(bR?.actuals||{});
       if(dR?.budgets?.d)setDebts(dR.budgets.d);
       setDpays(pR?.budgets?.p||{});
@@ -150,23 +183,48 @@ function App(){
     }catch(e){console.error(e);}
     setLoad(false);
   }
+
   const sv=useCallback((k,fn)=>{
     clearTimeout(T.current[k]);
     T.current[k]=setTimeout(async()=>{
       setSync("saving");
-      try{await fn();setSync("saved");setTimeout(()=>setSync("idle"),2000);}
+      try{await fn();setSync("saved");setTimeout(()=>setSync("idle"),2500);}
       catch{setSync("error");}
     },700);
   },[]);
-  function sB(b,a){sv("b",()=>dbSet(`bud-${yr}-${mo}`,{month:mo,year:yr,budgets:b,actuals:a}));}
-  function sD(d){sv("d",()=>dbSet("debts-v1",{budgets:{d}}));}
-  function sP(p){sv("p",()=>dbSet(`dpay-${yr}-${mo}`,{month:mo,year:yr,budgets:{p}}));}
-  function sA(a){sv("a",()=>dbSet("accs-v1",{budgets:{a}}));}
 
+  function sB(b,a)   {sv("b",()=>dbSet(`bud-${yr}-${mo}`,{month:mo,year:yr,budgets:b,actuals:a}));}
+  function sD(d)     {sv("d",()=>dbSet("debts-v1",{budgets:{d}}));}
+  function sP(p)     {sv("p",()=>dbSet(`dpay-${yr}-${mo}`,{month:mo,year:yr,budgets:{p}}));}
+  function sA(a)     {sv("a",()=>dbSet("accs-v1",{budgets:{a}}));}
+  function sCats(c)  {sv("c",()=>dbSet("cats-v1",{budgets:{cats:c}}));}
+
+  // Budget handlers
   function onB(id,v){const b={...budgets,[id]:parseFloat(v)||0};setBudgets(b);sB(b,actuals);}
   function onA(id,v){const a={...actuals,[id]:parseFloat(v)||0};setActuals(a);sB(budgets,a);}
-  function onDE(d){const nd=debts.map(x=>x.id===d.id?d:x);setDebts(nd);sD(nd);}
-  function onDD(id){if(!confirm("Delete this debt?"))return;const nd=debts.filter(x=>x.id!==id);setDebts(nd);sD(nd);}
+
+  // Category edit handlers
+  function onCatLabel(id,val){const nc=cats.map(c=>c.id===id?{...c,lbl:val}:c);setCats(nc);sCats(nc);}
+  function onCatIco(id,val)  {const nc=cats.map(c=>c.id===id?{...c,ico:val}:c);setCats(nc);sCats(nc);}
+  function onCatDel(id){
+    if(!confirm("Remove this row?"))return;
+    const nc=cats.filter(c=>c.id!==id);
+    const nb={...budgets}; delete nb[id];
+    const na={...actuals}; delete na[id];
+    setCats(nc);setBudgets(nb);setActuals(na);
+    sCats(nc);sB(nb,na);
+  }
+  function onCatAdd(group){
+    const id="c"+Date.now();
+    const nc=[...cats,{id,lbl:"New Item",ico:"📌",g:group,def:0,inc:group==="income"}];
+    const nb={...budgets,[id]:0};
+    setCats(nc);setBudgets(nb);
+    sCats(nc);sB(nb,actuals);
+  }
+
+  // Debt handlers
+  function onDE(d)  {const nd=debts.map(x=>x.id===d.id?d:x);setDebts(nd);sD(nd);}
+  function onDD(id) {if(!confirm("Delete debt?"))return;const nd=debts.filter(x=>x.id!==id);setDebts(nd);sD(nd);}
   function onAD(){
     if(!ndf.name)return;
     const nd=[...debts,{id:"d"+Date.now(),name:ndf.name,bal:parseFloat(ndf.bal)||0,apr:parseFloat(ndf.apr)||0,min:parseFloat(ndf.min)||0,col:"#D4CABC",ord:debts.length+1}];
@@ -182,24 +240,28 @@ function App(){
   }
   function onAcc(k,f,v){const a={...accs,[k]:{...accs[k],[f]:f==="bal"?parseFloat(v)||0:v}};setAccs(a);sA(a);}
 
-  const totInc=useMemo(()=>CATS.filter(c=>c.inc).reduce((s,c)=>s+(budgets[c.id]||0),0),[budgets]);
-  const totBud=useMemo(()=>CATS.filter(c=>!c.inc).reduce((s,c)=>s+(budgets[c.id]||0),0),[budgets]);
-  const totAct=useMemo(()=>CATS.filter(c=>!c.inc).reduce((s,c)=>s+(actuals[c.id]||0),0),[actuals]);
+  // Computed totals
+  const totInc =useMemo(()=>cats.filter(c=>c.inc).reduce((s,c)=>s+(budgets[c.id]||0),0),[cats,budgets]);
+  const totBud =useMemo(()=>cats.filter(c=>!c.inc).reduce((s,c)=>s+(budgets[c.id]||0),0),[cats,budgets]);
+  const totAct =useMemo(()=>cats.filter(c=>!c.inc).reduce((s,c)=>s+(actuals[c.id]||0),0),[cats,actuals]);
   const totDebt=useMemo(()=>debts.reduce((s,d)=>s+d.bal,0),[debts]);
-  const totBal=useMemo(()=>Object.values(accs).reduce((s,a)=>s+(a.bal||0),0),[accs]);
+  const totBal =useMemo(()=>Object.values(accs).reduce((s,a)=>s+(a.bal||0),0),[accs]);
 
   const sl={idle:"",saving:"Saving…",saved:"✓ Synced",error:"⚠ Error"}[sync];
   const sc={idle:"transparent",saving:C.blush,saved:C.sage,error:"#C05040"}[sync];
   const NAV=[{id:"dash",lbl:"Dashboard",ico:"📊"},{id:"bud",lbl:"Budget",ico:"📋"},{id:"debt",lbl:"Debts",ico:"💳"},{id:"accs",lbl:"Accounts",ico:"🏦"}];
 
-  const shared={debts,dpays,accs,totInc,totBud,totAct,totDebt,totBal,mo,yr,onB,onA,onDE,onDD,onPay,newPay,setNewPay,editD,setEditD,showAdd,setShowAdd,ndf,setNdf,onAD,onAcc,budgets,actuals};
+  const shared={cats,budgets,actuals,debts,dpays,accs,totInc,totBud,totAct,totDebt,totBal,mo,yr,
+    onB,onA,onCatLabel,onCatIco,onCatDel,onCatAdd,
+    onDE,onDD,onPay,newPay,setNewPay,editD,setEditD,showAdd,setShowAdd,ndf,setNdf,onAD,onAcc};
 
-  return (
+  return(
     <div style={{minHeight:"100vh",background:"linear-gradient(145deg,#F9F3EE 0%,#F2EAE1 40%,#EDE3DA 100%)",fontFamily:"'Lato',sans-serif",color:C.text,overflowX:"hidden",paddingBottom:88}}>
       <div style={{position:"fixed",top:-80,right:-80,width:280,height:280,borderRadius:"60% 40% 70% 30%/50% 60% 40% 50%",background:"radial-gradient(circle,rgba(222,188,181,0.28) 0%,transparent 70%)",pointerEvents:"none",zIndex:0}}/>
       <div style={{position:"fixed",bottom:-60,left:-60,width:250,height:250,borderRadius:"40% 60% 30% 70%/60% 40% 50% 50%",background:"radial-gradient(circle,rgba(181,196,177,0.22) 0%,transparent 70%)",pointerEvents:"none",zIndex:0}}/>
+
       {/* Header */}
-      <div style={{position:"sticky",top:0,zIndex:20,background:"rgba(255,255,255,0.9)",backdropFilter:"blur(14px)",borderBottom:"1px solid rgba(201,144,122,0.12)",padding:"12px 18px",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+      <div style={{position:"sticky",top:0,zIndex:20,background:"rgba(255,255,255,0.91)",backdropFilter:"blur(14px)",borderBottom:"1px solid rgba(201,144,122,0.12)",padding:"12px 18px",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
         <div>
           <div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:21,fontWeight:700,color:C.text}}>My Budget</div>
           <div style={{fontSize:10,color:C.light,letterSpacing:"0.12em",textTransform:"uppercase"}}>{MO[mo]} {yr}</div>
@@ -210,17 +272,20 @@ function App(){
           <div style={{fontSize:11,color:sc,minWidth:68,textAlign:"right"}}>{sl}</div>
         </div>
       </div>
+
       {/* Pages */}
       <div style={{maxWidth:520,margin:"0 auto",padding:"14px 14px 0",position:"relative",zIndex:1}}>
-        {loading?<div style={{textAlign:"center",padding:60,color:C.light,fontFamily:"'Cormorant Garamond',serif",fontSize:26}}>Loading…</div>:
-          page==="dash"?<Dash {...shared}/>:
-          page==="bud"?<Bud {...shared}/>:
-          page==="debt"?<Dbt {...shared}/>:
-          <Acc {...shared}/>
+        {loading
+          ? <div style={{textAlign:"center",padding:60,color:C.light,fontFamily:"'Cormorant Garamond',serif",fontSize:26}}>Loading…</div>
+          : page==="dash"  ? <Dash {...shared}/>
+          : page==="bud"   ? <Bud  {...shared}/>
+          : page==="debt"  ? <Dbt  {...shared}/>
+          : <Acc {...shared}/>
         }
       </div>
-      {/* Nav */}
-      <div style={{position:"fixed",bottom:0,left:0,right:0,zIndex:20,background:"rgba(255,255,255,0.93)",backdropFilter:"blur(14px)",borderTop:"1px solid rgba(201,144,122,0.12)",display:"flex",padding:"8px 0 18px"}}>
+
+      {/* Bottom nav */}
+      <div style={{position:"fixed",bottom:0,left:0,right:0,zIndex:20,background:"rgba(255,255,255,0.94)",backdropFilter:"blur(14px)",borderTop:"1px solid rgba(201,144,122,0.12)",display:"flex",padding:"8px 0 18px"}}>
         {NAV.map(n=>(
           <button key={n.id} onClick={()=>setPage(n.id)} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:2,background:"none",border:"none",cursor:"pointer",padding:"4px 0"}}>
             <span style={{fontSize:20}}>{n.ico}</span>
@@ -233,18 +298,22 @@ function App(){
   );
 }
 
-// ── DASHBOARD ──────────────────────────────────────────────────────
-function Dash({budgets,actuals,debts,dpays,accs,totInc,totBud,totAct,totDebt,totBal,mo,yr}){
+// ════════════════════════════════════════════════════════════════
+//  DASHBOARD
+// ════════════════════════════════════════════════════════════════
+function Dash({cats,budgets,actuals,debts,dpays,accs,totInc,totBud,totAct,totDebt,totBal,mo,yr}){
   const rem=totInc-totAct, pct=totInc>0?Math.min(totAct/totInc*100,100):0;
   const totInt=useMemo(()=>debts.reduce((s,d)=>s+d.bal*(d.apr/100/12),0),[debts]);
   const top5=useMemo(()=>[...debts].sort((a,b)=>b.apr-a.apr).slice(0,5),[debts]);
+  const incCats=cats.filter(c=>c.inc);
   return(
     <div className="fade">
       <div style={{marginBottom:18}}>
         <div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:28,fontWeight:600,color:C.text}}>{new Date().getHours()<12?"Good morning":"Good afternoon"} ☀️</div>
         <div style={{fontSize:13,color:C.sub,marginTop:2}}>{MO[mo]} {yr} — financial overview</div>
       </div>
-      {/* Account balances */}
+
+      {/* Accounts */}
       <div style={{display:"flex",gap:8,marginBottom:12}}>
         {Object.entries(accs).map(([k,a])=>(
           <div key={k} style={{flex:1,background:C.card,backdropFilter:"blur(12px)",borderRadius:14,padding:"12px 13px",border:`1.5px solid ${a.col}20`,boxShadow:"0 2px 14px rgba(140,100,80,0.07)"}}>
@@ -257,6 +326,7 @@ function Dash({budgets,actuals,debts,dpays,accs,totInc,totBud,totAct,totDebt,tot
           <div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:19,fontWeight:700,color:C.sage}}>{fmtD(totBal)}</div>
         </div>
       </div>
+
       {/* Monthly snapshot */}
       <div style={{background:C.card,backdropFilter:"blur(12px)",borderRadius:20,padding:"16px 18px",border:"1px solid "+C.border,boxShadow:"0 2px 18px rgba(140,100,80,0.07)",marginBottom:12}}>
         <div style={{fontSize:10,letterSpacing:"0.14em",textTransform:"uppercase",color:C.light,marginBottom:12}}>Monthly Snapshot</div>
@@ -275,20 +345,29 @@ function Dash({budgets,actuals,debts,dpays,accs,totInc,totBud,totAct,totDebt,tot
           <span>Spent {Math.round(pct)}% of income</span><span>{fmt(rem)} remaining</span>
         </div>
       </div>
+
       {/* Income streams */}
       <div style={{background:C.card,backdropFilter:"blur(12px)",borderRadius:20,padding:"16px 18px",border:"1px solid "+C.border,boxShadow:"0 2px 18px rgba(140,100,80,0.07)",marginBottom:12}}>
         <div style={{fontSize:10,letterSpacing:"0.14em",textTransform:"uppercase",color:C.light,marginBottom:12}}>Income Streams</div>
-        {[{lbl:"X-Energy (biweekly)",amt:budgets.xe||8880,col:C.sage},{lbl:"TerraPower – LC (biweekly)",amt:budgets.tp_lc||4278,col:C.blush},{lbl:"TerraPower – SCU (weekly)",amt:budgets.tp_sc||1700,col:C.mist}].map((s,i,arr)=>(
-          <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:i<arr.length-1?10:0}}>
-            <div style={{display:"flex",alignItems:"center",gap:8}}><div style={{width:7,height:7,borderRadius:"50%",background:s.col,flexShrink:0}}/><span style={{fontSize:13,color:C.text}}>{s.lbl}</span></div>
-            <span style={{fontFamily:"'Cormorant Garamond',serif",fontSize:15,fontWeight:700,color:s.col}}>{fmt(s.amt)}/mo</span>
-          </div>
-        ))}
+        {incCats.map((c,i)=>{
+          const cols=[C.sage,C.blush,C.mist,"#A8BDB8"];
+          const col=cols[i%cols.length];
+          return(
+            <div key={c.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:i<incCats.length-1?10:0}}>
+              <div style={{display:"flex",alignItems:"center",gap:8}}>
+                <div style={{width:7,height:7,borderRadius:"50%",background:col,flexShrink:0}}/>
+                <span style={{fontSize:13,color:C.text}}>{c.lbl}</span>
+              </div>
+              <span style={{fontFamily:"'Cormorant Garamond',serif",fontSize:15,fontWeight:700,color:col}}>{fmt(budgets[c.id]||0)}/mo</span>
+            </div>
+          );
+        })}
         <div style={{borderTop:"1px solid rgba(201,144,122,0.12)",marginTop:12,paddingTop:10,display:"flex",justifyContent:"space-between"}}>
           <span style={{fontSize:13,fontWeight:700}}>Total Monthly Income</span>
           <span style={{fontFamily:"'Cormorant Garamond',serif",fontSize:18,fontWeight:700,color:C.sage}}>{fmt(totInc)}</span>
         </div>
       </div>
+
       {/* Top debts */}
       <div style={{background:C.card,backdropFilter:"blur(12px)",borderRadius:20,padding:"16px 18px",border:"1px solid "+C.border,boxShadow:"0 2px 18px rgba(140,100,80,0.07)",marginBottom:12}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
@@ -304,13 +383,13 @@ function Dash({budgets,actuals,debts,dpays,accs,totInc,totBud,totAct,totDebt,tot
           return(<div key={d.id} style={{marginBottom:10}}>
             <div style={{display:"flex",justifyContent:"space-between",marginBottom:3}}>
               <span style={{fontSize:13,fontWeight:600}}>{d.name}</span>
-              <span style={{fontSize:11,color:d.apr>=25?"#C05040":C.light}}>{d.apr}% APR · payoff {payoffLbl(mo2)}</span>
+              <span style={{fontSize:11,color:d.apr>=25?"#C05040":C.light}}>{d.apr}% · payoff {payoffLbl(mo2)}</span>
             </div>
             <div style={{height:4,background:"#EDE8E3",borderRadius:99,overflow:"hidden",marginBottom:2}}>
               <div style={{height:"100%",width:`${Math.min(d.bal/totDebt*100*4,100)}%`,background:d.col,borderRadius:99}}/>
             </div>
             <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:C.light}}>
-              <span>{fmt(d.bal)}</span><span style={{color:"#C05040"}}>+{fmt(mi)}/mo interest</span>
+              <span>{fmt(d.bal)}</span><span style={{color:"#C05040"}}>+{fmt(mi)}/mo</span>
             </div>
           </div>);
         })}
@@ -320,63 +399,151 @@ function Dash({budgets,actuals,debts,dpays,accs,totInc,totBud,totAct,totDebt,tot
   );
 }
 
-// ── BUDGET ─────────────────────────────────────────────────────────
-function Bud({budgets,actuals,onB,onA,totInc,totBud,totAct}){
+// ════════════════════════════════════════════════════════════════
+//  BUDGET  (fully editable)
+// ════════════════════════════════════════════════════════════════
+function Bud({cats,budgets,actuals,onB,onA,onCatLabel,onCatIco,onCatDel,onCatAdd,totInc,totBud,totAct}){
+  const [editMode,setEditMode]=useState(false);
   const rem=totInc-totAct;
+
   return(
     <div className="fade">
-      <div style={{marginBottom:14}}>
-        <div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:26,fontWeight:600,color:C.text}}>Budget Planner</div>
-        <div style={{fontSize:12,color:C.sub,marginTop:2}}>Planned vs. actual — side by side</div>
-      </div>
-      <div style={{display:"grid",gridTemplateColumns:"1fr 88px 88px",gap:5,marginBottom:10,padding:"0 2px"}}>
-        <div/><div style={{textAlign:"center",fontSize:10,color:C.blush,fontWeight:700,letterSpacing:"0.1em",textTransform:"uppercase"}}>Planned</div>
-        <div style={{textAlign:"center",fontSize:10,color:C.sage,fontWeight:700,letterSpacing:"0.1em",textTransform:"uppercase"}}>Actual</div>
-      </div>
-      {Object.entries(GRP).map(([gid,g])=>{
-        const cats=CATS.filter(c=>c.g===gid);
-        const gb=cats.reduce((s,c)=>s+(budgets[c.id]||0),0), ga=cats.reduce((s,c)=>s+(actuals[c.id]||0),0);
-        const gO=!cats.some(c=>c.inc)&&ga>gb&&gb>0;
-        return(<div key={gid} style={{marginBottom:14}}>
-          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"7px 12px",background:`${g.col}18`,borderRadius:12,border:`1px solid ${g.col}28`,marginBottom:7}}>
-            <div style={{display:"flex",alignItems:"center",gap:7}}><span style={{fontSize:14}}>{g.ico}</span><span style={{fontSize:13,fontWeight:700}}>{g.lbl}</span></div>
-            <div style={{display:"flex",gap:14}}><span style={{fontSize:12,fontWeight:700,color:C.blush}}>{fmt(gb)}</span><span style={{fontSize:12,fontWeight:700,color:gO?"#C05040":C.sage}}>{fmt(ga)}</span></div>
+      {/* Header row */}
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:14}}>
+        <div>
+          <div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:26,fontWeight:600,color:C.text}}>Budget Planner</div>
+          <div style={{fontSize:12,color:C.sub,marginTop:2}}>
+            {editMode?"✏️ Edit mode — rename, add, or remove rows":"Planned vs. actual — side by side"}
           </div>
-          {cats.map(cat=>{
-            const bv=budgets[cat.id]||0, av=actuals[cat.id]||0, ov=!cat.inc&&av>bv&&bv>0;
-            return(<div key={cat.id} style={{display:"grid",gridTemplateColumns:"1fr 88px 88px",gap:5,alignItems:"center",marginBottom:5,background:C.card,borderRadius:11,padding:"8px 10px",border:"1px solid rgba(255,255,255,0.9)"}}>
-              <div style={{display:"flex",alignItems:"center",gap:5,overflow:"hidden"}}>
-                <span style={{fontSize:13,flexShrink:0}}>{cat.ico}</span>
-                <span style={{fontSize:12,lineHeight:1.3,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{cat.lbl}</span>
-              </div>
-              {[{v:bv,col:C.blush,fn:v=>onB(cat.id,v)},{v:av,col:ov?"#C05040":C.sage,fn:v=>onA(cat.id,v),ov}].map((inp,i)=>(
-                <div key={i} style={{position:"relative"}}>
-                  <span style={{position:"absolute",left:7,top:"50%",transform:"translateY(-50%)",fontSize:11,color:inp.col,fontWeight:700,pointerEvents:"none"}}>$</span>
-                  <input type="number" value={(i===0?budgets:actuals)[cat.id]||""} onChange={e=>inp.fn(e.target.value)}
-                    style={{width:"100%",padding:"5px 4px 5px 16px",fontSize:13,fontFamily:"'Cormorant Garamond',serif",fontWeight:600,border:`1.5px solid ${inp.col}35`,borderRadius:8,background:`${inp.col}0C`,color:inp.ov?"#C05040":C.text,outline:"none",boxSizing:"border-box"}}/>
-                </div>
-              ))}
-            </div>);
-          })}
-        </div>);
-      })}
-      <div style={{background:C.card,borderRadius:18,padding:"14px 18px",border:"1px solid "+C.border,marginBottom:20}}>
-        {[{lbl:"Total Income",v:totInc,col:C.sage},{lbl:"Total Budgeted",v:totBud,col:C.blush},{lbl:"Total Spent",v:totAct,col:totAct>totInc?"#C05040":C.mist}].map((s,i)=>(
-          <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-            <span style={{fontSize:13,fontWeight:600}}>{s.lbl}</span>
-            <span style={{fontFamily:"'Cormorant Garamond',serif",fontSize:17,fontWeight:700,color:s.col}}>{fmt(s.v)}</span>
-          </div>
-        ))}
-        <div style={{borderTop:"1px solid rgba(201,144,122,0.12)",paddingTop:9,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-          <span style={{fontSize:14,fontWeight:700}}>Remaining</span>
-          <span style={{fontFamily:"'Cormorant Garamond',serif",fontSize:22,fontWeight:700,color:rem>=0?C.sage:"#C05040"}}>{fmt(Math.abs(rem))}</span>
         </div>
+        <button onClick={()=>setEditMode(e=>!e)}
+          style={{padding:"7px 14px",borderRadius:10,border:`1.5px solid ${editMode?"rgba(122,154,128,0.5)":"rgba(201,144,122,0.3)"}`,background:editMode?"rgba(122,154,128,0.12)":"rgba(255,255,255,0.7)",fontSize:12,fontWeight:700,color:editMode?C.sage:C.blush,cursor:"pointer",flexShrink:0,marginTop:2}}>
+          {editMode?"✓ Done":"✏️ Edit"}
+        </button>
       </div>
+
+      {/* Column headers (only when not in full edit mode) */}
+      {!editMode&&(
+        <div style={{display:"grid",gridTemplateColumns:"1fr 86px 86px",gap:5,marginBottom:10,padding:"0 2px"}}>
+          <div/>
+          <div style={{textAlign:"center",fontSize:10,color:C.blush,fontWeight:700,letterSpacing:"0.1em",textTransform:"uppercase"}}>Planned</div>
+          <div style={{textAlign:"center",fontSize:10,color:C.sage,fontWeight:700,letterSpacing:"0.1em",textTransform:"uppercase"}}>Actual</div>
+        </div>
+      )}
+
+      {Object.entries(GRP).map(([gid,g])=>{
+        const groupCats=cats.filter(c=>c.g===gid);
+        if(groupCats.length===0&&!editMode)return null;
+        const gb=groupCats.reduce((s,c)=>s+(budgets[c.id]||0),0);
+        const ga=groupCats.reduce((s,c)=>s+(actuals[c.id]||0),0);
+        const gO=!groupCats.some(c=>c.inc)&&ga>gb&&gb>0;
+        return(
+          <div key={gid} style={{marginBottom:16}}>
+            {/* Group header */}
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"7px 12px",background:`${g.col}18`,borderRadius:12,border:`1px solid ${g.col}28`,marginBottom:8}}>
+              <div style={{display:"flex",alignItems:"center",gap:7}}>
+                <span style={{fontSize:14}}>{g.ico}</span>
+                <span style={{fontSize:13,fontWeight:700,color:C.text}}>{g.lbl}</span>
+              </div>
+              {!editMode&&(
+                <div style={{display:"flex",gap:14}}>
+                  <span style={{fontSize:12,fontWeight:700,color:C.blush}}>{fmt(gb)}</span>
+                  <span style={{fontSize:12,fontWeight:700,color:gO?"#C05040":C.sage}}>{fmt(ga)}</span>
+                </div>
+              )}
+            </div>
+
+            {/* Category rows */}
+            {groupCats.map(cat=>{
+              const bv=budgets[cat.id]||0, av=actuals[cat.id]||0, ov=!cat.inc&&av>bv&&bv>0;
+              if(editMode){
+                // ── EDIT MODE ROW ───────────────────────────────
+                return(
+                  <div key={cat.id} style={{display:"flex",gap:6,alignItems:"center",marginBottom:6,background:C.card,borderRadius:11,padding:"8px 10px",border:"1px solid rgba(255,255,255,0.9)"}}>
+                    {/* Emoji */}
+                    <input value={cat.ico} onChange={e=>onCatIco(cat.id,e.target.value)}
+                      style={{width:34,textAlign:"center",fontSize:16,border:"1.5px solid rgba(201,144,122,0.2)",borderRadius:7,padding:"4px 2px",background:"rgba(201,144,122,0.06)",outline:"none",flexShrink:0}}/>
+                    {/* Label */}
+                    <input value={cat.lbl} onChange={e=>onCatLabel(cat.id,e.target.value)}
+                      style={{flex:1,fontSize:12,border:"1.5px solid rgba(201,144,122,0.2)",borderRadius:7,padding:"5px 8px",background:"rgba(201,144,122,0.04)",color:C.text,outline:"none"}}/>
+                    {/* Default value */}
+                    <div style={{position:"relative",width:74}}>
+                      <span style={{position:"absolute",left:6,top:"50%",transform:"translateY(-50%)",fontSize:10,color:C.blush,fontWeight:700}}>$</span>
+                      <input type="number" value={budgets[cat.id]||""} onChange={e=>onB(cat.id,e.target.value)}
+                        style={{width:"100%",padding:"5px 4px 5px 14px",fontSize:12,fontFamily:"'Cormorant Garamond',serif",fontWeight:600,border:"1.5px solid rgba(201,144,122,0.28)",borderRadius:7,background:"rgba(201,144,122,0.06)",color:C.text,outline:"none",boxSizing:"border-box"}}/>
+                    </div>
+                    {/* Delete */}
+                    <button onClick={()=>onCatDel(cat.id)}
+                      style={{width:28,height:28,borderRadius:"50%",border:"1.5px solid rgba(192,80,64,0.3)",background:"rgba(192,80,64,0.06)",color:"#C05040",fontSize:14,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                      ×
+                    </button>
+                  </div>
+                );
+              } else {
+                // ── NORMAL ROW ──────────────────────────────────
+                return(
+                  <div key={cat.id} style={{display:"grid",gridTemplateColumns:"1fr 86px 86px",gap:5,alignItems:"center",marginBottom:5,background:C.card,borderRadius:11,padding:"8px 10px",border:"1px solid rgba(255,255,255,0.9)"}}>
+                    <div style={{display:"flex",alignItems:"center",gap:5,overflow:"hidden"}}>
+                      <span style={{fontSize:13,flexShrink:0}}>{cat.ico}</span>
+                      <span style={{fontSize:12,lineHeight:1.3,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",color:C.text}}>{cat.lbl}</span>
+                    </div>
+                    {/* Planned input */}
+                    <div style={{position:"relative"}}>
+                      <span style={{position:"absolute",left:7,top:"50%",transform:"translateY(-50%)",fontSize:11,color:C.blush,fontWeight:700,pointerEvents:"none"}}>$</span>
+                      <input type="number" value={budgets[cat.id]||""} onChange={e=>onB(cat.id,e.target.value)}
+                        style={{width:"100%",padding:"5px 4px 5px 16px",fontSize:13,fontFamily:"'Cormorant Garamond',serif",fontWeight:600,border:"1.5px solid rgba(201,144,122,0.3)",borderRadius:8,background:"rgba(201,144,122,0.07)",color:C.text,outline:"none",boxSizing:"border-box"}}/>
+                    </div>
+                    {/* Actual input */}
+                    <div style={{position:"relative"}}>
+                      <span style={{position:"absolute",left:7,top:"50%",transform:"translateY(-50%)",fontSize:11,color:ov?"#C05040":C.sage,fontWeight:700,pointerEvents:"none"}}>$</span>
+                      <input type="number" value={actuals[cat.id]||""} onChange={e=>onA(cat.id,e.target.value)}
+                        style={{width:"100%",padding:"5px 4px 5px 16px",fontSize:13,fontFamily:"'Cormorant Garamond',serif",fontWeight:600,border:`1.5px solid ${ov?"rgba(192,80,64,0.35)":"rgba(122,154,128,0.3)"}`,borderRadius:8,background:ov?"rgba(192,80,64,0.06)":"rgba(122,154,128,0.06)",color:ov?"#C05040":C.text,outline:"none",boxSizing:"border-box"}}/>
+                    </div>
+                  </div>
+                );
+              }
+            })}
+
+            {/* Add row button (always visible in edit mode) */}
+            {editMode&&(
+              <button onClick={()=>onCatAdd(gid)}
+                style={{width:"100%",padding:"7px",borderRadius:10,background:"rgba(255,255,255,0.5)",border:`1.5px dashed ${g.col}60`,fontSize:12,color:g.col,fontWeight:600,cursor:"pointer",marginTop:2}}>
+                + Add item to {g.lbl}
+              </button>
+            )}
+          </div>
+        );
+      })}
+
+      {/* Edit mode tip */}
+      {editMode&&(
+        <div style={{background:"rgba(122,154,128,0.08)",border:"1px solid rgba(122,154,128,0.2)",borderRadius:14,padding:"12px 16px",marginBottom:16,fontSize:12,color:C.sub,lineHeight:1.7}}>
+          💡 <strong>Tips:</strong> Click any emoji to change it. Edit names inline. The $ column sets your planned budget. Hit <strong>✓ Done</strong> when finished — changes sync automatically.
+        </div>
+      )}
+
+      {/* Summary */}
+      {!editMode&&(
+        <div style={{background:C.card,borderRadius:18,padding:"14px 18px",border:"1px solid "+C.border,marginBottom:20}}>
+          {[{lbl:"Total Income",v:totInc,col:C.sage},{lbl:"Total Budgeted",v:totBud,col:C.blush},{lbl:"Total Spent",v:totAct,col:totAct>totInc?"#C05040":C.mist}].map((s,i)=>(
+            <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+              <span style={{fontSize:13,fontWeight:600}}>{s.lbl}</span>
+              <span style={{fontFamily:"'Cormorant Garamond',serif",fontSize:17,fontWeight:700,color:s.col}}>{fmt(s.v)}</span>
+            </div>
+          ))}
+          <div style={{borderTop:"1px solid rgba(201,144,122,0.12)",paddingTop:9,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <span style={{fontSize:14,fontWeight:700}}>Remaining</span>
+            <span style={{fontFamily:"'Cormorant Garamond',serif",fontSize:22,fontWeight:700,color:rem>=0?C.sage:"#C05040"}}>{fmt(Math.abs(rem))}</span>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
-// ── DEBTS ──────────────────────────────────────────────────────────
+// ════════════════════════════════════════════════════════════════
+//  DEBTS
+// ════════════════════════════════════════════════════════════════
 function Dbt({debts,dpays,onDE,onDD,onPay,newPay,setNewPay,editD,setEditD,showAdd,setShowAdd,ndf,setNdf,onAD,totDebt}){
   const totInt=useMemo(()=>debts.reduce((s,d)=>s+d.bal*(d.apr/100/12),0),[debts]);
   const sorted=useMemo(()=>[...debts].sort((a,b)=>a.ord-b.ord),[debts]);
@@ -388,6 +555,7 @@ function Dbt({debts,dpays,onDE,onDD,onPay,newPay,setNewPay,editD,setEditD,showAd
         <div style={{textAlign:"right"}}><div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:19,fontWeight:700,color:C.blush}}>{fmt(totDebt)}</div>
         <div style={{fontSize:11,color:"#C05040"}}>{fmt(totInt)}/mo interest</div></div>
       </div>
+
       {/* Log payment */}
       <div style={{background:C.card,backdropFilter:"blur(12px)",borderRadius:18,padding:"14px 16px",border:"1px solid "+C.border,marginBottom:12}}>
         <div style={{fontSize:10,letterSpacing:"0.12em",textTransform:"uppercase",color:C.light,marginBottom:10}}>Log a Payment</div>
@@ -411,14 +579,15 @@ function Dbt({debts,dpays,onDE,onDD,onPay,newPay,setNewPay,editD,setEditD,showAd
           + Log Payment (updates balance)
         </button>
       </div>
-      {/* Add new debt */}
+
+      {/* Add debt */}
       <button onClick={()=>setShowAdd(!showAdd)} style={{width:"100%",padding:"9px",borderRadius:12,background:showAdd?"rgba(122,154,128,0.1)":"rgba(255,255,255,0.6)",border:"1.5px dashed rgba(122,154,128,0.4)",fontSize:12,fontWeight:700,color:C.sage,cursor:"pointer",marginBottom:12}}>
         {showAdd?"✕ Cancel":"+ Add New Debt"}
       </button>
       {showAdd&&(
         <div style={{background:C.card,borderRadius:14,padding:"13px 14px",border:"1px solid "+C.border,marginBottom:12}}>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:7,marginBottom:7}}>
-            <input placeholder="Name" value={ndf.name} onChange={e=>setNdf(f=>({...f,name:e.target.value}))}
+            <input placeholder="Debt name" value={ndf.name} onChange={e=>setNdf(f=>({...f,name:e.target.value}))}
               style={{gridColumn:"1/-1",padding:"7px 10px",borderRadius:9,border:"1.5px solid rgba(201,144,122,0.28)",background:"rgba(201,144,122,0.05)",fontSize:13,color:C.text,outline:"none"}}/>
             {[{p:"Balance ($)",k:"bal"},{p:"APR (%)",k:"apr"},{p:"Min Payment ($)",k:"min"}].map(f=>(
               <input key={f.k} type="number" placeholder={f.p} value={ndf[f.k]} onChange={e=>setNdf(x=>({...x,[f.k]:e.target.value}))}
@@ -428,6 +597,7 @@ function Dbt({debts,dpays,onDE,onDD,onPay,newPay,setNewPay,editD,setEditD,showAd
           <button onClick={onAD} style={{width:"100%",padding:"8px",borderRadius:9,background:"rgba(122,154,128,0.15)",border:"1.5px solid rgba(122,154,128,0.35)",fontSize:13,fontWeight:700,color:C.sage,cursor:"pointer"}}>Add Debt</button>
         </div>
       )}
+
       {/* Debt cards */}
       {sorted.map(d=>{
         const pays=dpays[d.id]||[], paid=pays.reduce((s,p)=>s+p.amt,0);
@@ -436,7 +606,7 @@ function Dbt({debts,dpays,onDE,onDD,onPay,newPay,setNewPay,editD,setEditD,showAd
         return(
           <div key={d.id} style={{background:C.card,backdropFilter:"blur(12px)",borderRadius:18,padding:"14px",border:`1.5px solid ${d.col}28`,marginBottom:11,boxShadow:"0 2px 12px rgba(140,100,80,0.06)"}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10}}>
-              <div><div style={{fontSize:15,fontWeight:700}}>{d.name}</div>
+              <div><div style={{fontSize:15,fontWeight:700,color:C.text}}>{d.name}</div>
               <div style={{fontSize:11,color:d.apr>=25?"#C05040":C.light,marginTop:2}}>{d.apr>0?`${d.apr}% APR`:"0% APR"} · Min: {fmt(d.min)}/mo</div></div>
               <div style={{textAlign:"right"}}>
                 <div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:21,fontWeight:700,color:d.col}}>{fmt(d.bal)}</div>
@@ -459,12 +629,11 @@ function Dbt({debts,dpays,onDE,onDD,onPay,newPay,setNewPay,editD,setEditD,showAd
                 </div>
               </div>
             )}
-            {/* Stats */}
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6,marginBottom:10}}>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6,marginBottom:paid>0?10:0}}>
               {[
-                {lbl:"This Month",   v:fmt(paid||0),         sub:`${pays.length} payment${pays.length!==1?"s":""}`,         col:d.col},
-                {lbl:"Payoff Est.", v:payoffLbl(mo2),        sub:isFinite(mo2)?`${mo2} mo at ${fmt(effPay)}/mo`:"⚠ increase payment", col:C.text},
-                {lbl:"Interest/Mo", v:fmt(mi),               sub:d.apr>0?`${d.apr}% APR`:"No interest",                   col:d.apr>=25?"#C05040":C.light},
+                {lbl:"This Month",  v:fmt(paid||0),    sub:`${pays.length} payment${pays.length!==1?"s":""}`,   col:d.col},
+                {lbl:"Payoff Est.", v:payoffLbl(mo2),  sub:isFinite(mo2)?`${mo2} mo at ${fmt(effPay)}/mo`:"⚠ increase payment", col:C.text},
+                {lbl:"Interest/Mo", v:fmt(mi),         sub:d.apr>0?`${d.apr}% APR`:"No interest",              col:d.apr>=25?"#C05040":C.light},
               ].map((s,i)=>(
                 <div key={i} style={{background:`${d.col}0F`,borderRadius:9,padding:"8px 9px",border:`1px solid ${d.col}18`}}>
                   <div style={{fontSize:9,color:C.light,textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:3}}>{s.lbl}</div>
@@ -473,8 +642,7 @@ function Dbt({debts,dpays,onDE,onDD,onPay,newPay,setNewPay,editD,setEditD,showAd
                 </div>
               ))}
             </div>
-            {/* Principal vs interest bar */}
-            {paid>0&&(<div style={{marginBottom:8}}>
+            {paid>0&&(<div style={{marginBottom:pays.length>0?8:0}}>
               <div style={{height:4,background:"#EDE8E3",borderRadius:99,overflow:"hidden",marginBottom:3}}>
                 <div style={{height:"100%",width:`${Math.min(principal/paid*100,100)}%`,background:C.sage,borderRadius:99}}/>
               </div>
@@ -483,7 +651,6 @@ function Dbt({debts,dpays,onDE,onDD,onPay,newPay,setNewPay,editD,setEditD,showAd
                 <span style={{color:"#C05040"}}>Interest: {fmt(Math.min(mi,paid))}</span>
               </div>
             </div>)}
-            {/* Payment history */}
             {pays.length>0&&(
               <div style={{borderTop:`1px solid ${d.col}18`,paddingTop:8}}>
                 <div style={{fontSize:10,color:C.light,marginBottom:5,textTransform:"uppercase",letterSpacing:"0.1em"}}>Payments This Month</div>
@@ -506,7 +673,9 @@ function Dbt({debts,dpays,onDE,onDD,onPay,newPay,setNewPay,editD,setEditD,showAd
   );
 }
 
-// ── ACCOUNTS ───────────────────────────────────────────────────────
+// ════════════════════════════════════════════════════════════════
+//  ACCOUNTS
+// ════════════════════════════════════════════════════════════════
 function Acc({accs,onAcc,totBal}){
   return(
     <div className="fade">
@@ -514,7 +683,7 @@ function Acc({accs,onAcc,totBal}){
         <div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:26,fontWeight:600,color:C.text}}>My Accounts</div>
         <div style={{fontSize:12,color:C.sub,marginTop:2}}>Both checking accounts in one place</div>
       </div>
-      <div style={{background:C.card,backdropFilter:"blur(12px)",borderRadius:14,padding:"14px 18px",border:"1px solid "+C.border,boxShadow:"0 2px 14px rgba(140,100,80,0.07)",marginBottom:14,textAlign:"center"}}>
+      <div style={{background:C.card,backdropFilter:"blur(12px)",borderRadius:14,padding:"14px 18px",border:"1px solid "+C.border,marginBottom:14,textAlign:"center"}}>
         <div style={{fontSize:10,color:C.light,letterSpacing:"0.14em",textTransform:"uppercase",marginBottom:5}}>Combined Balance</div>
         <div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:34,fontWeight:700,color:C.text}}>{fmtD(totBal)}</div>
       </div>
@@ -536,9 +705,9 @@ function Acc({accs,onAcc,totBal}){
         </div>
       ))}
       <div style={{textAlign:"center",fontSize:11,color:C.light,lineHeight:1.9,padding:"0 20px"}}>
-        💗 Update LC after X-Energy & TerraPower biweekly deposits.<br/>
-        Update SCU after TerraPower weekly deposits.<br/>
-        Everything syncs instantly to all your devices.
+        💗 Update LC after X-Energy &amp; TerraPower biweekly deposits.<br/>
+        Update SCU after weekly TerraPower deposits (~$425/wk).<br/>
+        All changes sync instantly across your devices.
       </div>
     </div>
   );
