@@ -136,17 +136,26 @@ const DEBTS0=[
   {id:"d11",name:"SCU Equity Loan",  bal:149589, apr:10,  min:850, col:"#C9907A",ord:11},
   {id:"d12",name:"Mortgage",         bal:220149, apr:2.8, min:2500,col:"#7A9A80",ord:12},
 ];
+const ACC_COLS=["#C9907A","#7A9A80","#9A7890","#A8BDB8","#CFC4DC","#D4B8A5","#B5C9B8","#C4C4D4"];
 const ACCS0={
-  lc:{name:"Main Checking (LC / X-Energy)",bal:3385,   col:"#C9907A"},
-  sc:{name:"SCU Checking (TerraPower)",    bal:1522.99, col:"#7A9A80"},
+  lc:{name:"Main Checking (LC / X-Energy)",bal:3385,   col:"#C9907A",type:"checking"},
+  sc:{name:"SCU Checking (TerraPower)",    bal:1522.99, col:"#7A9A80",type:"checking"},
+};
+const ASSET_TYPES={
+  property:  {lbl:"Real Estate",     ico:"🏠", hint:"Home, condo, land, rental"},
+  vehicle:   {lbl:"Vehicle",         ico:"🚗", hint:"Car, truck, boat, motorcycle"},
+  retirement:{lbl:"Retirement",      ico:"📈", hint:"401k, IRA, pension, 403b"},
+  investment:{lbl:"Investments",     ico:"💹", hint:"Brokerage, stocks, crypto"},
+  cash:      {lbl:"Cash & Savings",  ico:"💵", hint:"Checking, savings, money market"},
+  other:     {lbl:"Other Asset",     ico:"📦", hint:"Business equity, collectibles"},
 };
 const ASSETS0=[
-  {id:"a1",name:"Home Value",        val:0,ico:"🏠"},
-  {id:"a2",name:"Car(s)",            val:0,ico:"🚗"},
-  {id:"a3",name:"401k / Retirement", val:0,ico:"📈"},
-  {id:"a4",name:"Investments",       val:0,ico:"💹"},
-  {id:"a5",name:"Cash & Savings",    val:0,ico:"💵"},
-  {id:"a6",name:"Other Assets",      val:0,ico:"📦"},
+  {id:"a1",name:"Home",              val:0,ico:"🏠",type:"property",  address:""},
+  {id:"a2",name:"Car(s)",            val:0,ico:"🚗",type:"vehicle",   address:""},
+  {id:"a3",name:"401k / Retirement", val:0,ico:"📈",type:"retirement",address:""},
+  {id:"a4",name:"Investments",       val:0,ico:"💹",type:"investment", address:""},
+  {id:"a5",name:"Cash & Savings",    val:0,ico:"💵",type:"cash",      address:""},
+  {id:"a6",name:"Other Assets",      val:0,ico:"📦",type:"other",     address:""},
 ];
 
 function pmts(bal,apr,pay){
@@ -184,6 +193,26 @@ function doExport(cats,budgets,actuals,goals,assets,totDebt,mo,yr,notes){
   const a=document.createElement("a");
   a.href=url;a.download=`budget-${yr}-${String(mo+1).padStart(2,"0")}.csv`;
   document.body.appendChild(a);a.click();document.body.removeChild(a);URL.revokeObjectURL(url);
+}
+
+// ── Zillow Zestimate lookup ───────────────────────────────────────
+async function fetchZillowEstimate(address){
+  try{
+    const zUrl=`https://www.zillow.com/homes/${encodeURIComponent(address.trim())}_rb/`;
+    const proxy=`https://api.allorigins.win/raw?url=${encodeURIComponent(zUrl)}`;
+    const resp=await fetch(proxy,{signal:AbortSignal.timeout(9000)});
+    if(!resp.ok)return null;
+    const html=await resp.text();
+    const m=html.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
+    if(m){
+      const str=JSON.stringify(JSON.parse(m[1]));
+      for(const pat of[/"zestimate":(\d{5,})/,/"homeEstimate":(\d{5,})/,/"price":(\d{5,})/]){
+        const found=str.match(pat);
+        if(found){const v=parseInt(found[1]);if(v>50000&&v<20000000)return v;}
+      }
+    }
+    return null;
+  }catch(e){return null;}
 }
 
 // ── APP ────────────────────────────────────────────────────────────
@@ -301,12 +330,28 @@ function App(){
     setDebts(nd);sD(nd);setNewPay({did:"",amt:"",note:"",date:""});
   }
   function onAcc(k,f,v){const a={...accs,[k]:{...accs[k],[f]:f==="bal"?parseFloat(v)||0:v}};setAccs(a);sA(a);}
+  function onAddAcc(){
+    const id="acc"+Date.now();
+    const col=ACC_COLS[Object.keys(accs).length%ACC_COLS.length];
+    const a={...accs,[id]:{name:"New Account",bal:0,col,type:"checking"}};
+    setAccs(a);sA(a);
+  }
+  function onDelAcc(k){
+    if(!confirm("Remove this account?"))return;
+    const{[k]:_,...rest}=accs;
+    setAccs(rest);sA(rest);
+  }
   function onGoalEdit(g){const ng=goals.map(x=>x.id===g.id?g:x);setGoals(ng);sGoals(ng);}
   function onGoalDel(id){const ng=goals.filter(x=>x.id!==id);setGoals(ng);sGoals(ng);}
   function onGoalAdd(g){const ng=[...goals,g];setGoals(ng);sGoals(ng);}
   function onAssetVal(id,v){const as=assets.map(a=>a.id===id?{...a,val:parseFloat(v)||0}:a);setAssets(as);sAssets(as);}
   function onAssetName(id,v){const as=assets.map(a=>a.id===id?{...a,name:v}:a);setAssets(as);sAssets(as);}
-  function onAddAsset(){const as=[...assets,{id:"a"+Date.now(),name:"New Asset",val:0,ico:"📦"}];setAssets(as);sAssets(as);}
+  function onAssetUpdate(id,ch){const as=assets.map(a=>a.id===id?{...a,...ch}:a);setAssets(as);sAssets(as);}
+  function onAddAsset(type="other"){
+    const t=ASSET_TYPES[type]||ASSET_TYPES.other;
+    const as=[...assets,{id:"a"+Date.now(),name:t.lbl,val:0,ico:t.ico,type,address:""}];
+    setAssets(as);sAssets(as);
+  }
   function onDelAsset(id){const as=assets.filter(a=>a.id!==id);setAssets(as);sAssets(as);}
   function saveNwSnap(nw){
     const h=[...nwHist.filter(h=>!(h.mo===mo&&h.yr===yr)),{mo,yr,nw}]
@@ -334,7 +379,7 @@ function App(){
     userName,onName,
     onB,onA,onCatLbl,onCatIco,onCatRec,onCatDel,onCatAdd,
     onDE,onDD,onPay,newPay,setNewPay,editD,setEditD,showAddD,setShowAddD,ndf,setNdf,onAddDebt,
-    onAcc,onGoalEdit,onGoalDel,onGoalAdd,onAssetVal,onAssetName,onAddAsset,onDelAsset,
+    onAcc,onAddAcc,onDelAcc,onGoalEdit,onGoalDel,onGoalAdd,onAssetVal,onAssetName,onAssetUpdate,onAddAsset,onDelAsset,
     saveNwSnap,toggleDark,onNotes,isShared:IS_SHARED,
     doExp:()=>doExport(cats,budgets,actuals,goals,assets,totDebt,mo,yr,notes)};
 
@@ -448,17 +493,19 @@ function Dash({T,cats,budgets,actuals,debts,dpays,accs,assets,goals,nwHist,totIn
         })()}
       </Card>
 
-      {/* Account balances */}
-      <div style={{display:"flex",gap:8,marginBottom:12}}>
+      {/* Accounts */}
+      <div style={{display:"flex",gap:8,marginBottom:12,flexWrap:"wrap"}}>
         {Object.entries(accs).map(([k,a])=>(
-          <Card key={k} T={T} style={{flex:1,padding:"12px 13px",border:`1.5px solid ${a.col}22`}}>
-            <div style={{fontSize:9,color:T.lt,textTransform:"uppercase",letterSpacing:"0.12em",marginBottom:4,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{a.name}</div>
-            <div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:18,fontWeight:700,color:a.col}}>{fmtD(a.bal)}</div>
+          <Card key={k} T={T} style={{flex:"1 1 120px",padding:"11px 13px",border:`1.5px solid ${a.col}22`}}>
+            <div style={{fontSize:8,color:a.col,textTransform:"uppercase",letterSpacing:"0.12em",fontWeight:700,marginBottom:2}}>{a.type==="savings"?"🏦 Savings":"💳 Checking"}</div>
+            <div style={{fontSize:9,color:T.lt,marginBottom:4,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{a.name}</div>
+            <div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:17,fontWeight:700,color:a.col}}>{fmtD(a.bal)}</div>
           </Card>
         ))}
-        <Card T={T} style={{flex:1,padding:"12px 13px",border:`1.5px solid ${T.sage}22`}}>
-          <div style={{fontSize:9,color:T.lt,textTransform:"uppercase",letterSpacing:"0.12em",marginBottom:4}}>Combined</div>
-          <div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:18,fontWeight:700,color:T.sage}}>{fmtD(totBal)}</div>
+        <Card T={T} style={{flex:"1 1 100px",padding:"11px 13px",border:`1.5px solid ${T.sage}22`}}>
+          <div style={{fontSize:8,color:T.sage,textTransform:"uppercase",letterSpacing:"0.12em",fontWeight:700,marginBottom:2}}>All Accounts</div>
+          <div style={{fontSize:9,color:T.lt,marginBottom:4}}>Combined</div>
+          <div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:17,fontWeight:700,color:T.sage}}>{fmtD(totBal)}</div>
         </Card>
       </div>
 
@@ -807,11 +854,20 @@ function Dbt({T,debts,dpays,onDE,onDD,onPay,newPay,setNewPay,editD,setEditD,show
 
 // ── GOALS ─────────────────────────────────────────────────────────
 const GOAL_COLS=["#B5C9B8","#C9A99A","#CFC4DC","#A8BDB8","#D4B8A5","#C4C4D4","#DEBCB5","#88B098"];
-function Goals({T,goals,onGoalEdit,onGoalDel,onGoalAdd,assets,onAssetVal,onAssetName,onAddAsset,onDelAsset,totDebt,totAssets,netWorth,nwHist,saveNwSnap,isShared}){
+function Goals({T,goals,onGoalEdit,onGoalDel,onGoalAdd,assets,onAssetVal,onAssetName,onAssetUpdate,onAddAsset,onDelAsset,totDebt,totAssets,netWorth,nwHist,saveNwSnap,isShared}){
   const [showAddG,setShowAddG]=useState(false);
   const [editG,setEditG]=useState(null);
   const [ng,setNg]=useState({name:"",ico:"🎯",target:"",saved:"",monthly:"",col:"#B5C9B8",targetDate:""});
+  const [showTypePicker,setShowTypePicker]=useState(false);
+  const [zState,setZState]=useState({});  // {[assetId]: {status,value}}
   const nwPos=netWorth>=0;
+
+  async function doZillow(id,address){
+    if(!address||!address.trim())return;
+    setZState(s=>({...s,[id]:{status:"loading",value:null}}));
+    const val=await fetchZillowEstimate(address);
+    setZState(s=>({...s,[id]:val?{status:"found",value:val}:{status:"failed",value:null}}));
+  }
 
   function addGoal(){
     if(!ng.name||!ng.target)return;
@@ -992,28 +1048,128 @@ function Goals({T,goals,onGoalEdit,onGoalDel,onGoalAdd,assets,onAssetVal,onAsset
         </Card>
       )}
 
-      {/* Assets editor */}
-      <Card T={T} style={{padding:"16px 18px",marginBottom:14}}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
-          <SecLabel T={T} mb={0}>Assets</SecLabel>
-          {!isShared&&<button onClick={onAddAsset} style={{fontSize:11,color:T.sage,background:"none",border:"none",cursor:"pointer",fontWeight:700}}>+ Add</button>}
-        </div>
-        {assets.map(a=>(
-          <div key={a.id} style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
-            <span style={{fontSize:16,flexShrink:0}}>{a.ico}</span>
-            <input value={a.name} onChange={e=>onAssetName(a.id,e.target.value)} disabled={isShared}
-              style={{flex:1,fontSize:12,border:`1.5px solid ${T.sage}25`,borderRadius:8,padding:"6px 8px",background:`${T.sage}07`,color:T.text,outline:"none"}}/>
-            <div style={{position:"relative",width:96}}>
-              <span style={{position:"absolute",left:7,top:"50%",transform:"translateY(-50%)",fontSize:11,color:T.sage,fontWeight:700}}>$</span>
-              <input type="number" value={a.val||""} onChange={e=>onAssetVal(a.id,e.target.value)} disabled={isShared}
-                style={{width:"100%",padding:"6px 6px 6px 18px",fontSize:13,fontFamily:"'Cormorant Garamond',serif",fontWeight:600,border:`1.5px solid ${T.sage}28`,borderRadius:8,background:`${T.sage}09`,color:T.text,outline:"none",boxSizing:"border-box"}}/>
+      {/* ── Assets ── */}
+      <div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:18,fontWeight:600,color:T.text,marginBottom:10,marginTop:8}}>Your Assets</div>
+
+      {/* Type picker / Add button */}
+      {!isShared&&(
+        <div style={{marginBottom:12}}>
+          {showTypePicker?(
+            <div style={{background:T.card,backdropFilter:"blur(12px)",borderRadius:18,padding:"16px",border:`1px solid ${T.border}`,marginBottom:8}}>
+              <div style={{fontSize:12,color:T.lt,marginBottom:10,textAlign:"center",letterSpacing:"0.06em"}}>What type of asset are you adding?</div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:10}}>
+                {Object.entries(ASSET_TYPES).map(([k,t])=>(
+                  <button key={k} onClick={()=>{onAddAsset(k);setShowTypePicker(false);}}
+                    style={{padding:"12px 6px",borderRadius:12,border:`1.5px solid ${T.sage}28`,background:`${T.sage}0A`,cursor:"pointer",textAlign:"center",transition:"background .15s"}}>
+                    <div style={{fontSize:22,marginBottom:4}}>{t.ico}</div>
+                    <div style={{fontSize:11,fontWeight:700,color:T.text,marginBottom:2}}>{t.lbl}</div>
+                    <div style={{fontSize:9,color:T.lt,lineHeight:1.3}}>{t.hint}</div>
+                  </button>
+                ))}
+              </div>
+              <button onClick={()=>setShowTypePicker(false)} style={{width:"100%",padding:"7px",borderRadius:10,border:`1px solid ${T.div}`,background:"transparent",fontSize:12,color:T.lt,cursor:"pointer"}}>Cancel</button>
             </div>
-            {!isShared&&<button onClick={()=>onDelAsset(a.id)} style={{fontSize:13,color:T.danger,background:"none",border:"none",cursor:"pointer",flexShrink:0}}>×</button>}
+          ):(
+            <button onClick={()=>setShowTypePicker(true)}
+              style={{width:"100%",padding:"10px",borderRadius:13,background:`${T.sage}0A`,border:`1.5px dashed ${T.sage}40`,fontSize:13,fontWeight:700,color:T.sage,cursor:"pointer"}}>
+              + Add Property or Asset
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Asset cards */}
+      {assets.map(a=>{
+        const isProp=a.type==="property";
+        const zs=zState[a.id]||{status:"idle"};
+        const typeInfo=ASSET_TYPES[a.type]||ASSET_TYPES.other;
+        return(
+          <div key={a.id} style={{background:T.card,backdropFilter:"blur(12px)",borderRadius:18,padding:"15px 16px",border:`1.5px solid ${T.sage}20`,marginBottom:12,boxShadow:"0 2px 12px rgba(0,0,0,.05)"}}>
+            {/* Name row */}
+            <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12}}>
+              <span style={{fontSize:20,flexShrink:0}}>{a.ico}</span>
+              <div style={{flex:1}}>
+                <div style={{fontSize:9,color:T.lt,textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:3}}>{typeInfo.lbl}</div>
+                <input value={a.name} onChange={e=>onAssetName(a.id,e.target.value)} disabled={isShared}
+                  style={{width:"100%",fontSize:14,fontWeight:700,border:"none",background:"transparent",color:T.text,outline:"none",padding:0}}/>
+              </div>
+              {!isShared&&<button onClick={()=>onDelAsset(a.id)} style={{fontSize:15,color:T.danger,background:"none",border:"none",cursor:"pointer",flexShrink:0,opacity:.7}}>×</button>}
+            </div>
+
+            {/* Property address + Zillow lookup */}
+            {isProp&&!isShared&&(
+              <div style={{marginBottom:12,padding:"12px",borderRadius:12,background:`${T.blush}07`,border:`1px solid ${T.blush}18`}}>
+                <div style={{fontSize:10,color:T.blush,textTransform:"uppercase",letterSpacing:"0.1em",fontWeight:700,marginBottom:6}}>🏠 Property Address</div>
+                <div style={{display:"flex",gap:7,marginBottom:8}}>
+                  <input value={a.address||""} onChange={e=>onAssetUpdate(a.id,{address:e.target.value})}
+                    placeholder="e.g. 123 Main St, Seattle, WA 98101"
+                    style={{flex:1,fontSize:12,border:`1.5px solid ${T.blush}30`,borderRadius:9,padding:"8px 10px",background:`${T.blush}08`,color:T.text,outline:"none"}}/>
+                  <button onClick={()=>doZillow(a.id,a.address||"")}
+                    disabled={zs.status==="loading"||!a.address?.trim()}
+                    style={{padding:"8px 12px",borderRadius:9,border:`1.5px solid ${T.blush}40`,background:zs.status==="loading"?`${T.blush}22`:`${T.blush}14`,fontSize:13,fontWeight:700,color:T.blush,cursor:"pointer",flexShrink:0,opacity:!a.address?.trim()?.length?0.35:1,transition:"all .2s"}}>
+                    {zs.status==="loading"?"…":"🔍"}
+                  </button>
+                </div>
+
+                {/* Result states */}
+                {zs.status==="idle"&&a.address?.trim()&&(
+                  <div style={{fontSize:11,color:T.lt,fontStyle:"italic"}}>Tap 🔍 to look up the Zillow Zestimate® for this address</div>
+                )}
+                {zs.status==="loading"&&(
+                  <div style={{fontSize:12,color:T.blush,fontStyle:"italic"}}>Searching Zillow…</div>
+                )}
+                {zs.status==="found"&&(
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 12px",borderRadius:10,background:`${T.sage}12`,border:`1.5px solid ${T.sage}30`}}>
+                    <div>
+                      <div style={{fontSize:9,color:T.sage,textTransform:"uppercase",letterSpacing:"0.12em",fontWeight:700,marginBottom:3}}>Zillow Zestimate® found</div>
+                      <div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:22,fontWeight:700,color:T.sage}}>{fmt(zs.value)}</div>
+                    </div>
+                    <button onClick={()=>{onAssetVal(a.id,zs.value);setZState(s=>({...s,[a.id]:{...zs,status:"imported"}}));}}
+                      style={{padding:"8px 14px",borderRadius:10,background:`${T.sage}22`,border:`1.5px solid ${T.sage}50`,fontSize:13,fontWeight:700,color:T.sage,cursor:"pointer"}}>
+                      Import ↓
+                    </button>
+                  </div>
+                )}
+                {zs.status==="imported"&&(
+                  <div style={{fontSize:12,color:T.sage,fontWeight:600}}>✓ Zestimate imported — update anytime</div>
+                )}
+                {zs.status==="failed"&&(
+                  <div style={{padding:"10px 12px",borderRadius:10,background:`${T.blush}0A`,border:`1px solid ${T.blush}20`}}>
+                    <div style={{fontSize:12,color:T.sub,marginBottom:7,lineHeight:1.55}}>Zillow blocked the auto-lookup (they protect against bots). Open Zillow to find your Zestimate, then enter it in the value field below.</div>
+                    <div style={{display:"flex",gap:10,alignItems:"center"}}>
+                      <a href={`https://www.zillow.com/homes/${encodeURIComponent(a.address||"")}_rb/`} target="_blank" rel="noreferrer"
+                        style={{fontSize:12,color:T.blush,fontWeight:700,textDecoration:"none"}}>Open Zillow ↗</a>
+                      <button onClick={()=>doZillow(a.id,a.address||"")} style={{fontSize:11,color:T.lt,background:"none",border:"none",cursor:"pointer",textDecoration:"underline"}}>Try again</button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Value */}
+            <div>
+              <div style={{fontSize:10,color:T.lt,textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:5}}>
+                {isProp?"Estimated Value":"Value"}
+              </div>
+              <div style={{position:"relative"}}>
+                <span style={{position:"absolute",left:11,top:"50%",transform:"translateY(-50%)",fontSize:18,color:T.sage,fontFamily:"'Cormorant Garamond',serif",fontWeight:700}}>$</span>
+                <input type="number" value={a.val||""} onChange={e=>onAssetVal(a.id,e.target.value)} disabled={isShared}
+                  placeholder="0"
+                  style={{width:"100%",padding:"10px 10px 10px 30px",fontSize:22,fontFamily:"'Cormorant Garamond',serif",fontWeight:700,border:`1.5px solid ${T.sage}30`,borderRadius:12,background:`${T.sage}09`,color:T.sage,outline:"none",boxSizing:"border-box"}}/>
+              </div>
+            </div>
           </div>
-        ))}
-        <div style={{borderTop:`1px solid ${T.div}`,paddingTop:10,marginTop:4,display:"flex",justifyContent:"space-between"}}>
+        );
+      })}
+
+      {assets.length===0&&!showTypePicker&&(
+        <div style={{textAlign:"center",padding:"20px",color:T.lt,fontSize:12}}>No assets yet — tap "+ Add Property or Asset" to get started.</div>
+      )}
+
+      <Card T={T} style={{padding:"13px 18px",marginBottom:20}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
           <span style={{fontSize:13,fontWeight:700}}>Total Assets</span>
-          <span style={{fontFamily:"'Cormorant Garamond',serif",fontSize:18,fontWeight:700,color:T.sage}}>{fmt(totAssets)}</span>
+          <span style={{fontFamily:"'Cormorant Garamond',serif",fontSize:20,fontWeight:700,color:T.sage}}>{fmt(totAssets)}</span>
         </div>
       </Card>
     </div>
@@ -1021,7 +1177,7 @@ function Goals({T,goals,onGoalEdit,onGoalDel,onGoalAdd,assets,onAssetVal,onAsset
 }
 
 // ── MORE ──────────────────────────────────────────────────────────
-function More({T,accs,onAcc,totBal,notes,onNotes,toggleDark,dark,doExp,mo,yr,isShared,cats,budgets,actuals,goals,assets,totDebt,userName,onName}){
+function More({T,accs,onAcc,onAddAcc,onDelAcc,totBal,notes,onNotes,toggleDark,dark,doExp,mo,yr,isShared,cats,budgets,actuals,goals,assets,totDebt,userName,onName}){
   const shareUrl=`${window.location.origin}${window.location.pathname}?shared=true`;
   const [copied,setCopied]=useState(false);
   function copyShare(){navigator.clipboard.writeText(shareUrl).then(()=>{setCopied(true);setTimeout(()=>setCopied(false),2500);});}
@@ -1044,28 +1200,70 @@ function More({T,accs,onAcc,totBal,notes,onNotes,toggleDark,dark,doExp,mo,yr,isS
       </Card>
 
       {/* Accounts */}
-      <div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:18,fontWeight:600,color:T.text,marginBottom:10}}>🏦 Accounts</div>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+        <div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:18,fontWeight:600,color:T.text}}>🏦 Accounts</div>
+        {!isShared&&<button onClick={onAddAcc}
+          style={{padding:"6px 12px",borderRadius:9,border:`1.5px solid ${T.sage}40`,background:`${T.sage}10`,fontSize:12,fontWeight:700,color:T.sage,cursor:"pointer"}}>
+          + Add Account
+        </button>}
+      </div>
+
+      {/* Combined total */}
       <Card T={T} style={{padding:"14px 18px",marginBottom:12,textAlign:"center"}}>
         <SecLabel T={T} mb={5}>Combined Balance</SecLabel>
         <div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:32,fontWeight:700,color:T.text}}>{fmtD(totBal)}</div>
+        <div style={{fontSize:11,color:T.lt,marginTop:4}}>{Object.keys(accs).length} account{Object.keys(accs).length!==1?"s":""}</div>
       </Card>
+
       {Object.entries(accs).map(([k,a])=>(
-        <div key={k} style={{background:T.card,backdropFilter:"blur(12px)",borderRadius:18,padding:"16px 18px",border:`1.5px solid ${a.col}25`,marginBottom:12,boxShadow:"0 2px 14px rgba(0,0,0,.06)"}}>
+        <div key={k} style={{background:T.card,backdropFilter:"blur(12px)",borderRadius:18,padding:"16px 18px",border:`1.5px solid ${a.col}28`,marginBottom:12,boxShadow:"0 2px 14px rgba(0,0,0,.06)"}}>
+          {/* Header: type badge + delete */}
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+            {/* Checking / Savings toggle */}
+            <div style={{display:"flex",gap:5}}>
+              {["checking","savings"].map(t=>(
+                <button key={t} onClick={()=>!isShared&&onAcc(k,"type",t)} disabled={isShared}
+                  style={{padding:"4px 11px",borderRadius:99,border:`1.5px solid ${a.col}${a.type===t?"50":"22"}`,background:a.type===t?`${a.col}20`:"transparent",fontSize:11,fontWeight:a.type===t?700:400,color:a.type===t?a.col:T.lt,cursor:isShared?"default":"pointer",transition:"all .15s"}}>
+                  {t==="checking"?"💳 Checking":"🏦 Savings"}
+                </button>
+              ))}
+            </div>
+            {!isShared&&<button onClick={()=>onDelAcc(k)}
+              style={{fontSize:13,color:T.danger,background:"none",border:"none",cursor:"pointer",opacity:.7,padding:"2px 6px"}}>
+              Remove
+            </button>}
+          </div>
+
+          {/* Name */}
           <div style={{marginBottom:10}}>
             <SecLabel T={T} mb={5}>Account Name</SecLabel>
             <input value={a.name} onChange={e=>onAcc(k,"name",e.target.value)} disabled={isShared}
+              placeholder="e.g. Chase Checking"
               style={{width:"100%",padding:"8px 12px",borderRadius:10,border:`1.5px solid ${a.col}28`,background:`${a.col}08`,fontSize:14,fontWeight:600,color:T.text,outline:"none",boxSizing:"border-box"}}/>
           </div>
+
+          {/* Balance */}
           <div>
             <SecLabel T={T} mb={5}>Current Balance</SecLabel>
             <div style={{position:"relative"}}>
               <span style={{position:"absolute",left:12,top:"50%",transform:"translateY(-50%)",fontSize:20,color:a.col,fontFamily:"'Cormorant Garamond',serif",fontWeight:600}}>$</span>
-              <input type="number" step="0.01" value={a.bal} onChange={e=>onAcc(k,"bal",e.target.value)} disabled={isShared}
+              <input type="number" step="0.01" value={a.bal||""} onChange={e=>onAcc(k,"bal",e.target.value)} disabled={isShared}
+                placeholder="0.00"
                 style={{width:"100%",padding:"10px 12px 10px 28px",borderRadius:12,border:`1.5px solid ${a.col}35`,background:`${a.col}0E`,fontSize:24,fontFamily:"'Cormorant Garamond',serif",fontWeight:700,color:a.col,outline:"none",boxSizing:"border-box"}}/>
             </div>
           </div>
         </div>
       ))}
+
+      {Object.keys(accs).length===0&&(
+        <div style={{textAlign:"center",padding:"20px",color:T.lt,fontSize:12,marginBottom:12}}>No accounts yet — tap "+ Add Account" to get started.</div>
+      )}
+
+      {!isShared&&(
+        <button onClick={onAddAcc} style={{width:"100%",padding:"10px",borderRadius:13,background:`${T.sage}09`,border:`1.5px dashed ${T.sage}38`,fontSize:13,fontWeight:700,color:T.sage,cursor:"pointer",marginBottom:14}}>
+          + Add Another Account
+        </button>
+      )}
 
       {/* Export */}
       {!isShared&&(
