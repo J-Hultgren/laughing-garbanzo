@@ -324,6 +324,31 @@ const Btn=({T,children,onClick,style={},accent,outline,full,disabled})=>{
   );
 };
 
+// ── Debt name alias map — handles mismatches between debt name & budget cat label ──
+const DEBT_ALIASES={
+  "american express":"p_ax","amex":"p_ax","american express card":"p_ax",
+  "avant":"p_av",
+  "sofi":"p_sf","sofi loan":"p_sf","sofi personal loan":"p_sf",
+  "upstart":"p_up",
+  "upgrade":"p_ug",
+  "best egg":"p_be","bestegg":"p_be",
+  "affirm":"p_af",
+  "barclay":"p_ba","barclaycard":"p_ba","barclays":"p_ba",
+  "citi aa":"p_ca","citi aadvantage":"p_ca","citi aa - pp":"p_ca",
+  "citi":"p_ci","citibank":"p_ci","citi - pp":"p_ci",
+  "scu equity loan":"p_sc_eq","scu equity":"p_sc_eq","scu home equity":"p_sc_eq",
+  "mortgage":"mort",
+};
+function resolveDebtCatId(debtName,cats){
+  const key=(debtName||"").toLowerCase().trim();
+  if(!key)return null;
+  if(DEBT_ALIASES[key])return DEBT_ALIASES[key];
+  const exact=cats.find(c=>c.g==="debt"&&c.lbl.toLowerCase().trim()===key);
+  if(exact)return exact.id;
+  const partial=cats.find(c=>c.g==="debt"&&(c.lbl.toLowerCase().includes(key)||key.includes(c.lbl.toLowerCase())));
+  return partial?.id||null;
+}
+
 // ════════════════════════════════════════════════════════════════
 //  APP
 // ════════════════════════════════════════════════════════════════
@@ -376,19 +401,14 @@ function App(){
       setBudgets({...initB(lc),...savedB});
       setActuals(savedA);  // never pre-fill actuals — new months start blank
 
-      // Load debts, restoring catId by name-matching if missing (migration for older saved data)
+      // Load debts — restore catId using alias map + name matching for any debt missing it
       if(dR?.budgets?.d){
-        const debtCats=lc.filter(c=>c.g==="debt");
         const restored=dR.budgets.d.map(d=>{
           if(d.catId)return d;
-          // Try to match by exact name, then by name similarity
-          const match=debtCats.find(c=>c.lbl.toLowerCase()===d.name.toLowerCase())
-            ||debtCats.find(c=>c.lbl.toLowerCase().includes(d.name.toLowerCase()))
-            ||debtCats.find(c=>d.name.toLowerCase().includes(c.lbl.toLowerCase()));
-          return match?{...d,catId:match.id}:d;
+          const catId=resolveDebtCatId(d.name,lc);
+          return catId?{...d,catId}:d;
         });
         setDebts(restored);
-        // If we restored any catIds, save them back so this runs only once
         if(restored.some((d,i)=>d.catId!==dR.budgets.d[i]?.catId)){
           setTimeout(()=>sD(restored),1000);
         }
@@ -438,16 +458,59 @@ function App(){
     // Only sync to Debts tab when editing a debt-payment category
     const cat=cats.find(c=>c.id===id);
     if(cat?.g!=="debt")return;
-    const name=(cat.lbl||"").toLowerCase().trim();
-    // Try catId first (fast path), then name match (fallback for old saved data)
-    const linked=debts.find(d=>d.catId===id)||debts.find(d=>d.name.toLowerCase().trim()===name);
+    const linked=debts.find(d=>d.catId===id)||debts.find(d=>resolveDebtCatId(d.name,cats)===id);
     if(linked){
       const nd=debts.map(d=>d.id===linked.id?{...d,min:val,catId:id}:d);
       setDebts(nd);sD(nd);
     }
   }
-  function onA(id,v){const a={...actuals,[id]:parseFloat(v)||0};setActuals(a);sB(budgets,a);}
-  function onQuickAdd(id,amt){const a={...actuals,[id]:(actuals[id]||0)+(parseFloat(amt)||0)};setActuals(a);sB(budgets,a);}
+  // Helper: when a debt-category actual changes, keep exactly ONE "Via Budget tab" entry in dpays
+  function syncDebtPayment(catId, newTotal){
+    const cat=cats.find(c=>c.id===catId);
+    if(cat?.g!=="debt")return;
+    const linked=debts.find(d=>d.catId===catId)||debts.find(d=>resolveDebtCatId(d.name,cats)===catId);
+    if(!linked)return;
+    // Find any existing "Via Budget tab" entry to update in place
+    const existing=dpays[linked.id]||[];
+    const budgetIdx=existing.findIndex(e=>e.note==="Via Budget tab");
+    const oldBudgetAmt=budgetIdx>=0?existing[budgetIdx].amt:0;
+    // All manually-logged payments this month (excluding the budget-tab entry)
+    const manualTotal=existing.filter((_,i)=>i!==budgetIdx).reduce((s,e)=>s+e.amt,0);
+    // The budget-tab entry should equal: newTotal - manualTotal (clamped to 0)
+    const budgetAmt=Math.max(0,newTotal-manualTotal);
+    let updated;
+    if(budgetAmt===0){
+      // Remove the budget-tab entry entirely if nothing left to attribute
+      updated=existing.filter((_,i)=>i!==budgetIdx);
+    }else if(budgetIdx>=0){
+      // Update existing entry in place — no new line
+      updated=existing.map((e,i)=>i===budgetIdx?{...e,amt:budgetAmt,date:new Date().toISOString()}:e);
+    }else{
+      // First time: add one entry
+      updated=[...existing,{amt:budgetAmt,date:new Date().toISOString(),note:"Via Budget tab"}];
+    }
+    const p={...dpays,[linked.id]:updated};
+    setDpays(p);sP(p);
+    // Adjust debt balance by the change in the budget-tab portion only
+    const delta=budgetAmt-oldBudgetAmt;
+    if(delta!==0){
+      const nd=debts.map(d=>d.id===linked.id?{...d,bal:Math.max(0,d.bal-delta),catId}:d);
+      setDebts(nd);sD(nd);
+    }
+  }
+  function onA(id,v){
+    const val=parseFloat(v)||0;
+    const a={...actuals,[id]:val};
+    setActuals(a);sB(budgets,a);
+    syncDebtPayment(id,val);
+  }
+  function onQuickAdd(id,amt){
+    const add=parseFloat(amt)||0;
+    const val=(actuals[id]||0)+add;
+    const a={...actuals,[id]:val};
+    setActuals(a);sB(budgets,a);
+    syncDebtPayment(id,val);
+  }
   function onCatLbl(id,v){const nc=cats.map(c=>c.id===id?{...c,lbl:v}:c);setCats(nc);sCats(nc);}
   function onCatIco(id,v){const nc=cats.map(c=>c.id===id?{...c,ico:v}:c);setCats(nc);sCats(nc);}
   function onCatRec(id){const nc=cats.map(c=>c.id===id?{...c,rec:!c.rec}:c);setCats(nc);sCats(nc);}
@@ -457,7 +520,7 @@ function App(){
     const nd=debts.map(x=>x.id===d.id?d:x);
     setDebts(nd);sD(nd);
     // Find the linked budget cat — by catId first, then by name
-    const catId=d.catId||cats.find(c=>c.g==="debt"&&c.lbl.toLowerCase().trim()===d.name.toLowerCase().trim())?.id;
+    const catId=d.catId||resolveDebtCatId(d.name,cats);
     if(catId){
       const nb={...budgets,[catId]:d.min};
       setBudgets(nb);sB(nb,actuals);
@@ -471,8 +534,18 @@ function App(){
     if(!confirm("Delete debt?"))return;
     const debt=debts.find(x=>x.id===id);
     const nd=debts.filter(x=>x.id!==id);setDebts(nd);sD(nd);
-    // Remove linked budget cat too
-    if(debt?.catId){const nc=cats.filter(c=>c.id!==debt.catId);const nb={...budgets};delete nb[debt.catId];const na={...actuals};delete na[debt.catId];setCats(nc);setBudgets(nb);setActuals(na);sCats(nc);sB(nb,na);}
+    // Clear dpays for this debt
+    const{[id]:_removed,...restPays}=dpays;
+    setDpays(restPays);sP(restPays);
+    // Find linked budget cat — by catId first, then alias/name match
+    const catId=debt?.catId||resolveDebtCatId(debt?.name||"",cats);
+    if(catId){
+      const nc=cats.filter(c=>c.id!==catId);
+      const nb={...budgets};delete nb[catId];
+      const na={...actuals};delete na[catId];
+      setCats(nc);setBudgets(nb);setActuals(na);
+      sCats(nc);sB(nb,na);
+    }
   }
   function onAddDebt(){
     if(!ndf.name)return;
@@ -494,7 +567,37 @@ function App(){
     // Reduce debt balance
     const nd=debts.map(d=>d.id===newPay.did?{...d,bal:Math.max(0,d.bal-amt)}:d);
     setDebts(nd);sD(nd);
+    // Sync total paid this month → budget actual for the linked category
+    const debt=debts.find(d=>d.id===newPay.did);
+    const catId=debt?.catId||resolveDebtCatId(debt?.name||"",cats);
+    if(catId){
+      const totalPaid=(p[newPay.did]||[]).reduce((s,x)=>s+x.amt,0);
+      const na={...actuals,[catId]:totalPaid};
+      setActuals(na);sB(budgets,na);
+      // Stamp catId back on debt if missing so future calls use the fast path
+      if(!debt?.catId){const nd2=nd.map(d=>d.id===newPay.did?{...d,catId}:d);setDebts(nd2);sD(nd2);}
+    }
     setNewPay({did:"",amt:"",note:"",date:""});
+  }
+  function onDelPay(debtId,idx){
+    const pays=dpays[debtId]||[];
+    const removed=pays[idx];
+    if(!removed)return;
+    // Remove entry from dpays
+    const updated=pays.filter((_,i)=>i!==idx);
+    const p={...dpays,[debtId]:updated};
+    setDpays(p);sP(p);
+    // Restore debt balance (add the amount back)
+    const nd=debts.map(d=>d.id===debtId?{...d,bal:d.bal+removed.amt}:d);
+    setDebts(nd);sD(nd);
+    // Also restore the budget actual if linked
+    const debt=debts.find(d=>d.id===debtId);
+    const catId=debt?.catId||resolveDebtCatId(debt?.name||"",cats);
+    if(catId){
+      const newTotal=updated.reduce((s,x)=>s+x.amt,0);
+      const na={...actuals,[catId]:newTotal};
+      setActuals(na);sB(budgets,na);
+    }
   }
   // Implement scenario changes into real data
   function onImplement(type,payload){
@@ -557,7 +660,7 @@ function App(){
     totInc,totBud,totAct,totDebt,totBal,totAssets,netWorth,healthScore,split5030,
     mo,yr,userName,focusMode,irregIncome,pastIncome,effectiveIncome,
     onB,onA,onQuickAdd,onCatLbl,onCatIco,onCatRec,onCatDel,onCatAdd,
-    onDE,onDD,onPay,newPay,setNewPay,editD,setEditD,showAddD,setShowAddD,ndf,setNdf,onAddDebt,onImplement,
+    onDE,onDD,onPay,onDelPay,newPay,setNewPay,editD,setEditD,showAddD,setShowAddD,ndf,setNdf,onAddDebt,onImplement,
     onAcc,onAddAcc,onDelAcc,onGoalEdit,onGoalDel,onGoalAdd,onGoalPay,
     onAssetVal,onAssetName,onAssetUpdate,onAddAsset,onDelAsset,
     saveNwSnap,onTheme,onName,onFocus,onNotes,onIrreg,isShared:IS_SHARED,setPage,scenarioTab,setScenarioTab,
@@ -953,13 +1056,65 @@ function Bud({T,cats,budgets,actuals,debts,onB,onA,onQuickAdd,onCatLbl,onCatIco,
       })}
       {editMode&&<div style={{background:`${T.a2}10`,border:`1px solid ${T.a2}25`,borderRadius:14,padding:"11px 14px",marginBottom:14,fontSize:12,color:T.sub,lineHeight:1.7}}>💡 <strong>↻</strong> = auto-fills actual at the start of each month. Tap <strong>✓ Done</strong> when finished.</div>}
       {!editMode&&<Card T={T} style={{padding:"13px 17px",marginBottom:20}}>
-        {[{lbl:"Total Income",v:totInc,c:T.a2},{lbl:"Total Budgeted",v:totBud,c:T.a},{lbl:"Total Spent",v:totAct,c:totAct>totInc?T.danger:T.a3}].map((s,i)=>(
-          <Row key={i} style={{marginBottom:7}}><span style={{fontSize:13,fontWeight:600}}>{s.lbl}</span><span style={{fontFamily:"'Cormorant Garamond',serif",fontSize:16,fontWeight:700,color:s.c}}>{fmt(s.v)}</span></Row>
+        {/* Main rows */}
+        {[
+          {lbl:"Total Income",      v:totInc, c:T.a2},
+          {lbl:"Total Budgeted",    v:totBud, c:T.a},
+          {lbl:"Total Spent",       v:totAct, c:totAct>totInc?T.danger:T.a3},
+        ].map((s,i)=>(
+          <Row key={i} style={{marginBottom:7}}>
+            <span style={{fontSize:13,fontWeight:600}}>{s.lbl}</span>
+            <span style={{fontFamily:"'Cormorant Garamond',serif",fontSize:16,fontWeight:700,color:s.c}}>{fmt(s.v)}</span>
+          </Row>
         ))}
-        <Row style={{borderTop:`1px solid ${T.div}`,paddingTop:8}}>
-          <span style={{fontSize:14,fontWeight:700}}>Remaining</span>
-          <span style={{fontFamily:"'Cormorant Garamond',serif",fontSize:22,fontWeight:700,color:rem>=0?T.a2:T.danger}}>{fmt(Math.abs(rem))}</span>
-        </Row>
+        <div style={{borderTop:`1px solid ${T.div}`,marginTop:4,paddingTop:10}}>
+          {/* Remaining Planned — income minus budgeted */}
+          {(()=>{
+            const remPlan=totInc-totBud;
+            const over=remPlan<0;
+            return(
+              <Row style={{marginBottom:8}}>
+                <div>
+                  <span style={{fontSize:13,fontWeight:700}}>Remaining Planned</span>
+                  <div style={{fontSize:10,color:T.lt,marginTop:1}}>Income − budgeted</div>
+                </div>
+                <div style={{textAlign:"right"}}>
+                  <span style={{fontFamily:"'Cormorant Garamond',serif",fontSize:20,fontWeight:700,color:over?T.danger:T.a2}}>{fmt(Math.abs(remPlan))}</span>
+                  <div style={{fontSize:10,color:over?T.danger:T.lt,marginTop:1}}>{over?"⚠ over-budgeted":"unallocated"}</div>
+                </div>
+              </Row>
+            );
+          })()}
+          {/* Remaining Actual — income minus spent */}
+          {(()=>{
+            const remAct=totInc-totAct;
+            const over=remAct<0;
+            return(
+              <Row>
+                <div>
+                  <span style={{fontSize:13,fontWeight:700}}>Remaining Actual</span>
+                  <div style={{fontSize:10,color:T.lt,marginTop:1}}>Income − spent</div>
+                </div>
+                <div style={{textAlign:"right"}}>
+                  <span style={{fontFamily:"'Cormorant Garamond',serif",fontSize:22,fontWeight:700,color:over?T.danger:T.a2}}>{fmt(Math.abs(remAct))}</span>
+                  <div style={{fontSize:10,color:over?T.danger:T.lt,marginTop:1}}>{over?"⚠ over spent":"left to spend"}</div>
+                </div>
+              </Row>
+            );
+          })()}
+        </div>
+        {/* Progress bar showing actual vs planned */}
+        {(totBud>0||totAct>0)&&(
+          <div style={{marginTop:12}}>
+            <div style={{height:5,background:T.div,borderRadius:99,overflow:"hidden",marginBottom:4}}>
+              <div style={{height:"100%",width:`${Math.min(totAct/Math.max(totBud,totInc,1)*100,100)}%`,background:totAct>totBud?T.danger:T.a2,borderRadius:99,transition:"width .5s"}}/>
+            </div>
+            <Row style={{fontSize:10,color:T.lt}}>
+              <span>Spent {totBud>0?Math.round(totAct/totBud*100):0}% of budget</span>
+              <span>{totInc>0?Math.round(totAct/totInc*100):0}% of income</span>
+            </Row>
+          </div>
+        )}
       </Card>}
     </div>
   );
@@ -968,7 +1123,7 @@ function Bud({T,cats,budgets,actuals,debts,onB,onA,onQuickAdd,onCatLbl,onCatIco,
 // ════════════════════════════════════════════════════════════════
 //  DEBTS
 // ════════════════════════════════════════════════════════════════
-function Dbt({T,debts,dpays,onDE,onDD,onPay,newPay,setNewPay,editD,setEditD,showAddD,setShowAddD,ndf,setNdf,onAddDebt,totDebt,isShared}){
+function Dbt({T,debts,dpays,onDE,onDD,onPay,onDelPay,newPay,setNewPay,editD,setEditD,showAddD,setShowAddD,ndf,setNdf,onAddDebt,totDebt,isShared}){
   const totInt=useMemo(()=>debts.reduce((s,d)=>s+d.bal*(d.apr/100/12),0),[debts]);
   const sorted=useMemo(()=>[...debts].sort((a,b)=>a.ord-b.ord),[debts]);
   return(
@@ -1070,9 +1225,17 @@ function Dbt({T,debts,dpays,onDE,onDD,onPay,newPay,setNewPay,editD,setEditD,show
             {pays.length>0&&<div style={{borderTop:`1px solid ${d.col}18`,paddingTop:7}}>
               <div style={{fontSize:10,color:T.lt,marginBottom:4,textTransform:"uppercase",letterSpacing:"0.1em"}}>Payments This Month</div>
               {pays.map((p,i)=>(
-                <Row key={i} style={{fontSize:12,marginBottom:3}}>
-                  <span style={{color:T.lt}}>{p.note||new Date(p.date).toLocaleDateString("en-US",{month:"short",day:"numeric"})}</span>
-                  <span style={{fontWeight:700,color:T.a2}}>{fmt(p.amt)}</span>
+                <Row key={i} style={{fontSize:12,marginBottom:3,alignItems:"center"}}>
+                  <span style={{color:T.lt,flex:1}}>{p.note||new Date(p.date).toLocaleDateString("en-US",{month:"short",day:"numeric"})}</span>
+                  <span style={{fontWeight:700,color:T.a2,marginRight:8}}>{fmt(p.amt)}</span>
+                  {!isShared&&(
+                    <button
+                      onClick={()=>{if(confirm(`Remove this ${fmt(p.amt)} payment? The balance and budget will be restored.`))onDelPay(d.id,i);}}
+                      title="Remove this payment"
+                      style={{width:18,height:18,borderRadius:"50%",border:`1px solid ${T.danger}40`,background:`${T.danger}0C`,color:T.danger,fontSize:11,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,lineHeight:1}}>
+                      ×
+                    </button>
+                  )}
                 </Row>
               ))}
               <Row style={{borderTop:`1px solid ${d.col}12`,paddingTop:5,marginTop:3}}>
