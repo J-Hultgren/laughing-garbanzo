@@ -673,6 +673,7 @@ function App(){
       {IS_SHARED&&<div style={{background:`${T.a}22`,borderBottom:`1px solid ${T.a}30`,padding:"8px 16px",textAlign:"center",fontSize:12,color:T.a,fontWeight:700,letterSpacing:"0.08em",textTransform:"uppercase"}}>👁 View Only — Partner Dashboard</div>}
       <div style={{position:"sticky",top:IS_SHARED?33:0,zIndex:20,background:T.hdr,backdropFilter:"blur(14px)",borderBottom:`1px solid ${T.div}`,padding:"10px 16px",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
         <div>
+          <div style={{fontSize:10,color:T.a,fontWeight:700,letterSpacing:"0.11em",textTransform:"uppercase",marginBottom:1}}>{["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"][new Date().getDay()]}, {MO[new Date().getMonth()]} {new Date().getDate()}, {new Date().getFullYear()}</div>
           <div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:20,fontWeight:700,color:T.text}}>My Budget</div>
           <div style={{fontSize:9,color:T.lt,letterSpacing:"0.12em",textTransform:"uppercase"}}>{MO[mo]} {yr}</div>
         </div>
